@@ -459,8 +459,11 @@ pub struct FunctionResponse {
     pub id: Option<String>,
     pub name: String,
     pub response: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parts: Option<Vec<FunctionResponsePart>>, // TODO: Add missing properties from docs.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub will_continue: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduling: Option<Scheduling>,
 }
 
@@ -543,9 +546,66 @@ impl GenerateContentResponse {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use crate::types::{Candidate, Modality, ServiceTier, UsageMetadata};
 
-    use super::GenerateContentResponseResult;
+    use super::{
+        FunctionResponse, FunctionResponseBlob, FunctionResponsePart,
+        GenerateContentResponseResult, Scheduling,
+    };
+
+    #[test]
+    fn function_response_omits_unset_optional_fields() -> serde_json::Result<()> {
+        let response = FunctionResponse {
+            id: None,
+            name: "get_weather".to_string(),
+            response: json!({ "temperature": 21 }),
+            parts: None,
+            will_continue: None,
+            scheduling: None,
+        };
+
+        let value = serde_json::to_value(&response)?;
+
+        assert_eq!(
+            value,
+            json!({ "name": "get_weather", "response": { "temperature": 21 } })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn function_response_includes_set_optional_fields() -> serde_json::Result<()> {
+        let response = FunctionResponse {
+            id: Some("call-1".to_string()),
+            name: "get_weather".to_string(),
+            response: json!({ "temperature": 21 }),
+            parts: Some(vec![FunctionResponsePart::InlineData(
+                FunctionResponseBlob {
+                    mime_type: "image/png".to_string(),
+                    data: "aGVsbG8=".to_string(),
+                },
+            )]),
+            will_continue: Some(false),
+            scheduling: Some(Scheduling::Silent),
+        };
+
+        let value = serde_json::to_value(&response)?;
+
+        assert_eq!(
+            value,
+            json!({
+                "id": "call-1",
+                "name": "get_weather",
+                "response": { "temperature": 21 },
+                "parts": [{ "inlineData": { "mimeType": "image/png", "data": "aGVsbG8=" } }],
+                "willContinue": false,
+                "scheduling": "SILENT"
+            })
+        );
+        Ok(())
+    }
 
     #[test]
     pub fn parses_usage_metadata() {
