@@ -14,8 +14,10 @@ use crate::types::FunctionResponse;
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct Content {
     /// The role of the message author (`user` or `model`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
     /// The ordered parts that make up this message.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parts: Option<Vec<Part>>,
 }
 
@@ -182,7 +184,7 @@ impl Part {
 mod test {
     use serde_json::json;
 
-    use crate::types::{Part, PartData};
+    use crate::types::{Content, Part, PartData, Role};
 
     fn part(data: PartData) -> Part {
         Part {
@@ -241,6 +243,56 @@ mod test {
             part.data,
             PartData::FunctionCall { id: None, ref name, args: None } if name == "get_weather"
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn system_prompt_omits_unset_role() -> serde_json::Result<()> {
+        let content = Content::system_prompt("You are a helpful assistant.");
+
+        let value = serde_json::to_value(&content)?;
+
+        assert_eq!(
+            value,
+            json!({ "parts": [{ "text": "You are a helpful assistant." }] })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn content_omits_unset_parts() -> serde_json::Result<()> {
+        let content = Content::builder().role(Role::User).build();
+
+        let value = serde_json::to_value(&content)?;
+
+        assert_eq!(value, json!({ "role": "user" }));
+        Ok(())
+    }
+
+    #[test]
+    fn content_includes_set_role_and_parts() -> serde_json::Result<()> {
+        let content = Content::builder()
+            .role(Role::Model)
+            .add_text_part("Hello!")
+            .build();
+
+        let value = serde_json::to_value(&content)?;
+
+        assert_eq!(
+            value,
+            json!({ "role": "model", "parts": [{ "text": "Hello!" }] })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn content_without_role_parses_as_none() -> serde_json::Result<()> {
+        let input = json!({ "parts": [{ "text": "Hello!" }] });
+
+        let content: Content = serde_json::from_value(input)?;
+
+        assert!(content.role.is_none());
+        assert_eq!(content.get_text().as_deref(), Some("Hello!"));
         Ok(())
     }
 

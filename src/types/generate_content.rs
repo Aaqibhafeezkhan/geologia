@@ -548,10 +548,12 @@ impl GenerateContentResponse {
 mod tests {
     use serde_json::json;
 
-    use crate::types::{Candidate, Modality, Part, PartData, ServiceTier, UsageMetadata};
+    use crate::types::{
+        Candidate, Content, Modality, Part, PartData, Role, ServiceTier, UsageMetadata,
+    };
 
     use super::{
-        FunctionResponse, FunctionResponseBlob, FunctionResponsePart,
+        FunctionResponse, FunctionResponseBlob, FunctionResponsePart, GenerateContentRequest,
         GenerateContentResponseResult, Scheduling,
     };
 
@@ -725,6 +727,32 @@ mod tests {
         assert!(!obj.contains_key("toolUsePromptTokenCount"));
         assert!(!obj.contains_key("promptTokensDetails"));
         assert!(!obj.contains_key("serviceTier"));
+    }
+
+    #[test]
+    fn request_system_instruction_omits_unset_role() -> serde_json::Result<()> {
+        let request = GenerateContentRequest::builder()
+            .contents(vec![
+                Content::builder()
+                    .role(Role::User)
+                    .add_text_part("Hello!")
+                    .build(),
+            ])
+            .system_instruction(Content::system_prompt("You are a helpful assistant."))
+            .build();
+
+        let value = serde_json::to_value(&request)?;
+
+        assert_eq!(
+            value,
+            json!({
+                "contents": [{ "role": "user", "parts": [{ "text": "Hello!" }] }],
+                "systemInstruction": {
+                    "parts": [{ "text": "You are a helpful assistant." }]
+                }
+            })
+        );
+        Ok(())
     }
 
     #[test]
