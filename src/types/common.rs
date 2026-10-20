@@ -184,15 +184,25 @@ mod test {
 
     use crate::types::{Part, PartData};
 
+    fn part(data: PartData) -> Part {
+        Part {
+            thought: None,
+            thought_signature: None,
+            part_metadata: None,
+            media_resolution: None,
+            data,
+        }
+    }
+
     #[test]
     fn function_call_omits_unset_id_and_args() -> serde_json::Result<()> {
-        let data = PartData::FunctionCall {
+        let part = part(PartData::FunctionCall {
             id: None,
             name: "get_weather".to_string(),
             args: None,
-        };
+        });
 
-        let value = serde_json::to_value(&data)?;
+        let value = serde_json::to_value(&part)?;
 
         assert_eq!(value, json!({ "functionCall": { "name": "get_weather" } }));
         Ok(())
@@ -200,13 +210,13 @@ mod test {
 
     #[test]
     fn function_call_includes_set_id_and_args() -> serde_json::Result<()> {
-        let data = PartData::FunctionCall {
+        let part = part(PartData::FunctionCall {
             id: Some("call-1".to_string()),
             name: "get_weather".to_string(),
             args: Some(json!({ "city": "Lisbon" })),
-        };
+        });
 
-        let value = serde_json::to_value(&data)?;
+        let value = serde_json::to_value(&part)?;
 
         assert_eq!(
             value,
@@ -218,6 +228,19 @@ mod test {
                 }
             })
         );
+        Ok(())
+    }
+
+    #[test]
+    fn function_call_without_id_and_args_parses_as_none() -> serde_json::Result<()> {
+        let input = json!({ "functionCall": { "name": "get_weather" } });
+
+        let part: Part = serde_json::from_value(input)?;
+
+        assert!(matches!(
+            part.data,
+            PartData::FunctionCall { id: None, ref name, args: None } if name == "get_weather"
+        ));
         Ok(())
     }
 

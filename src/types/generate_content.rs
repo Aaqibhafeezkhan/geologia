@@ -548,36 +548,48 @@ impl GenerateContentResponse {
 mod tests {
     use serde_json::json;
 
-    use crate::types::{Candidate, Modality, ServiceTier, UsageMetadata};
+    use crate::types::{Candidate, Modality, Part, PartData, ServiceTier, UsageMetadata};
 
     use super::{
         FunctionResponse, FunctionResponseBlob, FunctionResponsePart,
         GenerateContentResponseResult, Scheduling,
     };
 
+    fn part(response: FunctionResponse) -> Part {
+        Part {
+            thought: None,
+            thought_signature: None,
+            part_metadata: None,
+            media_resolution: None,
+            data: PartData::FunctionResponse(response),
+        }
+    }
+
     #[test]
     fn function_response_omits_unset_optional_fields() -> serde_json::Result<()> {
-        let response = FunctionResponse {
+        let part = part(FunctionResponse {
             id: None,
             name: "get_weather".to_string(),
             response: json!({ "temperature": 21 }),
             parts: None,
             will_continue: None,
             scheduling: None,
-        };
+        });
 
-        let value = serde_json::to_value(&response)?;
+        let value = serde_json::to_value(&part)?;
 
         assert_eq!(
             value,
-            json!({ "name": "get_weather", "response": { "temperature": 21 } })
+            json!({
+                "functionResponse": { "name": "get_weather", "response": { "temperature": 21 } }
+            })
         );
         Ok(())
     }
 
     #[test]
     fn function_response_includes_set_optional_fields() -> serde_json::Result<()> {
-        let response = FunctionResponse {
+        let part = part(FunctionResponse {
             id: Some("call-1".to_string()),
             name: "get_weather".to_string(),
             response: json!({ "temperature": 21 }),
@@ -589,19 +601,21 @@ mod tests {
             )]),
             will_continue: Some(false),
             scheduling: Some(Scheduling::Silent),
-        };
+        });
 
-        let value = serde_json::to_value(&response)?;
+        let value = serde_json::to_value(&part)?;
 
         assert_eq!(
             value,
             json!({
-                "id": "call-1",
-                "name": "get_weather",
-                "response": { "temperature": 21 },
-                "parts": [{ "inlineData": { "mimeType": "image/png", "data": "aGVsbG8=" } }],
-                "willContinue": false,
-                "scheduling": "SILENT"
+                "functionResponse": {
+                    "id": "call-1",
+                    "name": "get_weather",
+                    "response": { "temperature": 21 },
+                    "parts": [{ "inlineData": { "mimeType": "image/png", "data": "aGVsbG8=" } }],
+                    "willContinue": false,
+                    "scheduling": "SILENT"
+                }
             })
         );
         Ok(())
