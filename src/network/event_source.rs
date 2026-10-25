@@ -82,38 +82,37 @@ impl Decoder for ServerSentEventsCodec {
         &mut self,
         src: &mut tokio_util::bytes::BytesMut,
     ) -> Result<Option<Self::Item>, Self::Error> {
-        let res = self.lines_code.decode(src)?;
-
-        let Some(mut line) = res else {
-            return Ok(None);
-        };
-
-        if line.is_empty() {
-            let result = mem::take(&mut self.next);
-            return Ok(Some(result));
-        }
-
-        if line.starts_with(EVENT) {
-            line.drain(..EVENT.len());
-            self.next.event = Some(line);
-        } else if line.starts_with(DATA) {
-            line.drain(..DATA.len());
-            if let Some(ref mut existing) = self.next.data {
-                existing.push('\n');
-                existing.push_str(&line);
-            } else {
-                self.next.data = Some(line);
+        // Keep reading lines until an event is complete: returning `None`
+        // tells `FramedRead` to wait for more bytes, even if `src` still
+        // holds the rest of the event.
+        while let Some(mut line) = self.lines_code.decode(src)? {
+            if line.is_empty() {
+                let result = mem::take(&mut self.next);
+                return Ok(Some(result));
             }
-        } else if line.starts_with(ID) {
-            line.drain(..ID.len());
-            self.next.id = Some(line);
-        } else if line.starts_with(RETRY) {
-            line.drain(..RETRY.len());
-            let Ok(retry) = line.parse() else {
-                warn!(line, "Received invalid retry value");
-                return Ok(None);
-            };
-            self.next.retry = Some(retry);
+
+            if line.starts_with(EVENT) {
+                line.drain(..EVENT.len());
+                self.next.event = Some(line);
+            } else if line.starts_with(DATA) {
+                line.drain(..DATA.len());
+                if let Some(ref mut existing) = self.next.data {
+                    existing.push('\n');
+                    existing.push_str(&line);
+                } else {
+                    self.next.data = Some(line);
+                }
+            } else if line.starts_with(ID) {
+                line.drain(..ID.len());
+                self.next.id = Some(line);
+            } else if line.starts_with(RETRY) {
+                line.drain(..RETRY.len());
+                let Ok(retry) = line.parse() else {
+                    warn!(line, "Received invalid retry value");
+                    continue;
+                };
+                self.next.retry = Some(retry);
+            }
         }
 
         Ok(None)
@@ -129,4 +128,47 @@ pub fn stream_response(
     let bytes_stream = response.bytes_stream();
     let body_reader = StreamReader::new(bytes_stream.map(|res| res.map_err(std::io::Error::other)));
     FramedRead::new(body_reader, ServerSentEventsCodec::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::bytes::BytesMut;
+
+    #[test]
+    fn decode_returns_each_event_already_in_the_buffer() {
+        let mut codec = ServerSentEventsCodec::new();
+        let mut src = BytesMut::from("data: one\r\n\r\ndata: two\r\n\r\n");
+
+        let first = codec.decode(&mut src).unwrap().unwrap();
+        let second = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(first.data.as_deref(), Some("one"));
+        assert_eq!(second.data.as_deref(), Some("two"));
+        assert!(codec.decode(&mut src).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_keeps_a_partial_event_until_its_end_arrives() {
+        let mut codec = ServerSentEventsCodec::new();
+        let mut src = BytesMut::from("event: delta\ndata: a\ndata: b\n");
+
+        assert!(codec.decode(&mut src).unwrap().is_none());
+        src.extend_from_slice(b"\n");
+        let event = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(event.event.as_deref(), Some("delta"));
+        assert_eq!(event.data.as_deref(), Some("a\nb"));
+    }
+
+    #[test]
+    fn decode_skips_an_invalid_retry_and_finishes_the_event() {
+        let mut codec = ServerSentEventsCodec::new();
+        let mut src = BytesMut::from("retry: soon\ndata: x\n\n");
+
+        let event = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(event.retry, None);
+        assert_eq!(event.data.as_deref(), Some("x"));
+    }
 }
