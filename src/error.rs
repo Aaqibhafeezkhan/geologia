@@ -4,6 +4,7 @@
 //! Error types for the Google Gemini client.
 
 use std::fmt::Display;
+use std::time::Duration;
 use tokio_util::codec::LinesCodecError;
 
 use crate::types;
@@ -65,6 +66,17 @@ impl Display for Error {
 
 impl std::error::Error for Error {}
 
+impl Error {
+    /// Returns the recommended retry delay if this error is a [`Error::VertexError`]
+    /// containing a `RetryInfo` entry.
+    pub fn retry_delay(&self) -> Option<Duration> {
+        match self {
+            Error::VertexError(e) => e.retry_delay(),
+            _ => None,
+        }
+    }
+}
+
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
         Error::HttpClient(e)
@@ -92,5 +104,28 @@ impl From<types::VertexApiError> for Error {
 impl From<LinesCodecError> for Error {
     fn from(e: LinesCodecError) -> Self {
         Error::EventSourceError(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_retry_delay_delegates_to_vertex_error() {
+        let vertex_err = types::VertexApiError {
+            code: 429,
+            message: "Quota exceeded".into(),
+            status: "RESOURCE_EXHAUSTED".into(),
+            details: Some(vec![serde_json::json!({
+                "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                "retryDelay": "15s"
+            })]),
+        };
+        let err = Error::VertexError(vertex_err);
+        assert_eq!(err.retry_delay(), Some(Duration::from_secs(15)));
+
+        let other_err = Error::NoCandidatesError;
+        assert_eq!(other_err.retry_delay(), None);
     }
 }
