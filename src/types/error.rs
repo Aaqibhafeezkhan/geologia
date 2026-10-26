@@ -58,21 +58,20 @@ impl VertexApiError {
     /// assert_eq!(err.retry_delay(), Some(Duration::from_secs(37)));
     /// ```
     pub fn retry_delay(&self) -> Option<Duration> {
-        let details = self.details.as_deref()?;
-        for detail in details {
+        self.details.as_deref()?.iter().find_map(|detail| {
             let is_retry_info = detail
                 .get("@type")
                 .and_then(|t| t.as_str())
                 .is_some_and(is_retry_info_type);
-            if is_retry_info {
-                let delay_str = detail
-                    .get("retryDelay")
-                    .or_else(|| detail.get("retry_delay"))
-                    .and_then(|d| d.as_str())?;
-                return parse_duration(delay_str);
+            if !is_retry_info {
+                return None;
             }
-        }
-        None
+            detail
+                .get("retryDelay")
+                .or_else(|| detail.get("retry_delay"))
+                .and_then(|d| d.as_str())
+                .and_then(parse_duration)
+        })
     }
 }
 
@@ -98,16 +97,14 @@ fn parse_duration(s: &str) -> Option<Duration> {
 
     let nanos = match nanos_str {
         Some(nanos_str) => {
-            if nanos_str.is_empty() || !nanos_str.chars().all(|c| c.is_ascii_digit()) {
+            if nanos_str.is_empty()
+                || nanos_str.len() > 9
+                || !nanos_str.chars().all(|c| c.is_ascii_digit())
+            {
                 return None;
             }
-            let truncated = if nanos_str.len() > 9 {
-                &nanos_str[..9]
-            } else {
-                nanos_str
-            };
-            let parsed: u32 = truncated.parse().ok()?;
-            let factor = 10u32.checked_pow(9 - truncated.len() as u32)?;
+            let parsed: u32 = nanos_str.parse().ok()?;
+            let factor = 10u32.checked_pow(9 - nanos_str.len() as u32)?;
             parsed.checked_mul(factor)?
         }
         None => 0,
@@ -224,18 +221,20 @@ mod tests {
     #[test]
     fn retry_delay_with_unparsable_or_missing_retry_delay() {
         let cases = [
-            "invalid", "37",     // missing 's' suffix
-            "-1s",    // negative
-            "-1.5s",  // negative fractional
-            "1.5.0s", // multiple decimals
-            ".5s",    // missing leading digits
-            "1.s",    // missing fractional digits
-            "",       // empty
-            "s",      // only suffix
-            " 37s",   // leading space
-            "37s ",   // trailing space
-            "NaNs",   // non-digit
-            "1e3s",   // scientific notation
+            "invalid",
+            "37",            // missing 's' suffix
+            "-1s",           // negative
+            "-1.5s",         // negative fractional
+            "1.5.0s",        // multiple decimals
+            ".5s",           // missing leading digits
+            "1.s",           // missing fractional digits
+            "",              // empty
+            "s",             // only suffix
+            " 37s",          // leading space
+            "37s ",          // trailing space
+            "NaNs",          // non-digit
+            "1e3s",          // scientific notation
+            "1.1234567890s", // more than 9 fractional digits (sub-nanosecond)
         ];
 
         for case in cases {
@@ -297,6 +296,26 @@ mod tests {
             ]),
         };
         assert_eq!(err.retry_delay(), Some(Duration::from_secs(42)));
+    }
+
+    #[test]
+    fn retry_delay_with_multiple_retry_info_entries_skips_malformed() {
+        let err = VertexApiError {
+            code: 429,
+            message: "Quota exceeded".into(),
+            status: "RESOURCE_EXHAUSTED".into(),
+            details: Some(vec![
+                serde_json::json!({
+                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                    "retryDelay": "malformed"
+                }),
+                serde_json::json!({
+                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                    "retryDelay": "20s"
+                }),
+            ]),
+        };
+        assert_eq!(err.retry_delay(), Some(Duration::from_secs(20)));
     }
 
     #[test]
