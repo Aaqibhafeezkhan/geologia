@@ -358,6 +358,31 @@ pub struct SafetyRating {
     pub severity_score: Option<f32>,
 }
 
+/// Feedback explaining why a prompt was blocked.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptFeedback {
+    pub block_reason: Option<BlockReason>,
+    pub safety_ratings: Option<Vec<SafetyRating>>,
+}
+
+/// Reason a prompt was blocked.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BlockReason {
+    #[serde(rename = "BLOCK_REASON_UNSPECIFIED")]
+    Unspecified,
+    #[serde(rename = "SAFETY")]
+    Safety,
+    #[serde(rename = "OTHER")]
+    Other,
+    #[serde(rename = "BLOCKLIST")]
+    Blocklist,
+    #[serde(rename = "PROHIBITED_CONTENT")]
+    ProhibitedContent,
+    #[serde(rename = "IMAGE_SAFETY")]
+    ImageSafety,
+}
+
 /// Token usage statistics for a generate content request/response.
 ///
 /// See <https://ai.google.dev/api/generate-content#UsageMetadata>.
@@ -524,8 +549,10 @@ impl From<GenerateContentResponse> for Result<GenerateContentResponseResult> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentResponseResult {
+    #[serde(default)]
     pub candidates: Vec<Candidate>,
     pub usage_metadata: Option<UsageMetadata>,
+    pub prompt_feedback: Option<PromptFeedback>,
 }
 
 /// An error response from the `generateContent` endpoint.
@@ -554,7 +581,7 @@ mod tests {
 
     use super::{
         FunctionResponse, FunctionResponseBlob, FunctionResponsePart, GenerateContentRequest,
-        GenerateContentResponseResult, Scheduling,
+        GenerateContentResponse, GenerateContentResponseResult, Scheduling,
     };
 
     fn part(response: FunctionResponse) -> Part {
@@ -587,6 +614,18 @@ mod tests {
             })
         );
         Ok(())
+    }
+
+    #[test]
+    fn parses_blocked_prompt_response() {
+        let input = r#"{"promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"promptTokenCount":5}}"#;
+        let response: GenerateContentResponse = serde_json::from_str(input).unwrap();
+        let GenerateContentResponse::Ok(response) = response else {
+            panic!("expected successful response with prompt feedback");
+        };
+
+        assert!(response.candidates.is_empty());
+        assert_eq!(response.prompt_feedback.unwrap().block_reason, Some(super::BlockReason::Safety));
     }
 
     #[test]
