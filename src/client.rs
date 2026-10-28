@@ -221,3 +221,28 @@ impl GeminiClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::GeminiClient;
+    use crate::network::event_source::ServerSentEvent;
+
+    #[test]
+    fn stream_parses_blocked_prompt_response() {
+        let event = Ok(ServerSentEvent {
+            data: Some(
+                r#"{"promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"promptTokenCount":5}}"#
+                    .to_string(),
+            ),
+            ..Default::default()
+        });
+
+        let result = GeminiClient::parse_event(event).expect("SSE event should produce a result");
+        let response = result.expect("blocked prompt response should parse");
+        assert!(response.candidates.is_empty());
+        assert_eq!(
+            response.prompt_feedback.unwrap().block_reason,
+            Some(crate::prelude::BlockReason::Safety)
+        );
+    }
+}
