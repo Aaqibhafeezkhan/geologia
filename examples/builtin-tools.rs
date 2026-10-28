@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .tools(vec![tools])
         .build();
     let response = gemini_client
-        .generate_content(&request, "gemini-2.5-flash")
+        .generate_content(&request, "gemini-3.1-flash-lite")
         .await?;
 
     let candidate = &response.candidates[0];
