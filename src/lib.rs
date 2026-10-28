@@ -28,7 +28,7 @@
 //!
 //! # Advanced configuration
 //!
-//! Use [`GeminiClient::builder`] to configure a custom base URL (e.g. for proxies,
+//! Use [`GeminiClient::builder`](crate::prelude::GeminiClient::builder) to configure a custom base URL (e.g. for proxies,
 //! local mock servers, or offline testing) or to supply a custom [`reqwest::Client`]:
 //!
 //! ```no_run

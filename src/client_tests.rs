@@ -139,9 +139,14 @@ async fn generate_content_against_mock_server_checks_path_and_api_key() -> Resul
         .contents(vec![Content::builder().add_text_part("Hello").build()])
         .build();
 
-    let response = client.generate_content(&request, "gemini-2.0-flash").await?;
+    let response = client
+        .generate_content(&request, "gemini-2.0-flash")
+        .await?;
     let candidate = response.candidates.first().ok_or("expected candidate")?;
-    assert_eq!(candidate.get_text().as_deref(), Some("Hello from mock server!"));
+    assert_eq!(
+        candidate.get_text().as_deref(),
+        Some("Hello from mock server!")
+    );
     Ok(())
 }
 
@@ -184,9 +189,14 @@ async fn http_client_is_used_when_provided() -> Result<()> {
         .contents(vec![Content::builder().add_text_part("Test").build()])
         .build();
 
-    let response = client.generate_content(&request, "gemini-2.0-flash").await?;
+    let response = client
+        .generate_content(&request, "gemini-2.0-flash")
+        .await?;
     let candidate = response.candidates.first().ok_or("expected candidate")?;
-    assert_eq!(candidate.get_text().as_deref(), Some("Custom HTTP client used!"));
+    assert_eq!(
+        candidate.get_text().as_deref(),
+        Some("Custom HTTP client used!")
+    );
     Ok(())
 }
 

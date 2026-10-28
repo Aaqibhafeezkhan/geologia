@@ -97,9 +97,8 @@ impl GeminiClient {
         request: &GenerateContentRequest,
         model: &str,
     ) -> GeminiResult<impl Stream<Item = GeminiResult<GenerateContentResponseResult>>> {
-        let endpoint_url = self.endpoint_url(&format!(
-            "models/{model}:streamGenerateContent?alt=sse"
-        ));
+        let endpoint_url =
+            self.endpoint_url(&format!("models/{model}:streamGenerateContent?alt=sse"));
         let client = self.client.clone();
         let request = request.clone();
         let resp = client
@@ -134,8 +133,7 @@ impl GeminiClient {
         request: &GenerateContentRequest,
         model: &str,
     ) -> GeminiResult<GenerateContentResponseResult> {
-        let endpoint_url =
-            self.endpoint_url(&format!("models/{model}:generateContent"));
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:generateContent"));
         let resp = self
             .client
             .post(&endpoint_url)
@@ -163,8 +161,7 @@ impl GeminiClient {
         request: &TextEmbeddingRequest,
         model: &str,
     ) -> GeminiResult<TextEmbeddingResponseOk> {
-        let endpoint_url =
-            self.endpoint_url(&format!("models/{model}:predict"));
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:predict"));
         let resp = self
             .client
             .post(&endpoint_url)
@@ -195,8 +192,7 @@ impl GeminiClient {
         request: &CountTokensRequest,
         model: &str,
     ) -> GeminiResult<CountTokensResponseResult> {
-        let endpoint_url =
-            self.endpoint_url(&format!("models/{model}:countTokens"));
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:countTokens"));
         let resp = self
             .client
             .post(&endpoint_url)
@@ -224,8 +220,7 @@ impl GeminiClient {
         request: &PredictImageRequest,
         model: &str,
     ) -> GeminiResult<PredictImageResponse> {
-        let endpoint_url =
-            self.endpoint_url(&format!("models/{model}:predict"));
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:predict"));
 
         let resp = self
             .client
@@ -498,7 +493,9 @@ impl GeminiClientBuilder {
         GeminiClient {
             client: self.client.unwrap_or_default(),
             api_key: self.api_key,
-            base_url: self.base_url.unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+            base_url: self
+                .base_url
+                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
         }
     }
 }
