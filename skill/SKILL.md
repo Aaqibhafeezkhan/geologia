@@ -63,7 +63,7 @@ let request = GenerateContentRequest::builder()
     ])
     .build();
 
-let response = client.generate_content(&request, "gemini-2.5-pro").await?;
+let response = client.generate_content(&request, "gemini-3.1-pro-preview").await?;
 println!("{}", response.candidates[0].get_text().unwrap());
 ```
 
@@ -74,7 +74,7 @@ use geologia::prelude::{Content, GeminiClient, GenerateContentRequest, Role};
 use tokio_stream::StreamExt;
 
 let mut stream = client
-    .stream_generate_content(&request, "gemini-2.5-pro")
+    .stream_generate_content(&request, "gemini-3.1-pro-preview")
     .await?;
 
 while let Some(chunk) = stream.next().await {
@@ -156,7 +156,7 @@ let request = GenerateContentRequest::builder()
 ## Response metadata
 
 ```rust
-let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 println!("{:?} {:?}", response.model_version, response.response_id);
 if let Some(status) = &response.model_status {
     println!("stage: {:?}, retires: {:?}", status.model_stage, status.retirement_time);
@@ -176,7 +176,7 @@ if candidate.finish_reason.as_deref() == Some("CONTINUATION") {
             .contents(original_contents.clone()) // must match the initial request exactly
             .continuation_token(token.clone())
             .build();
-        let next = client.generate_content(&request, "gemini-2.5-flash").await?;
+        let next = client.generate_content(&request, "gemini-3.8-flash").await?;
     }
 }
 ```
@@ -198,7 +198,7 @@ let request = GenerateContentRequest::builder()
     .contents(vec![...])
     .tools(vec![tools])
     .build();
-let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 // Grounding and URL context details are raw JSON (`serde_json::Value`) for now.
 println!("{:?}", response.candidates[0].url_context_metadata);
 ```
@@ -258,7 +258,7 @@ let request = GenerateContentRequest::builder()
     .tools(vec![tools.clone()])
     .build();
 
-let response = client.generate_content(&request, "gemini-2.5-pro").await?;
+let response = client.generate_content(&request, "gemini-3.1-pro-preview").await?;
 
 // Check if the model wants to call a function
 if let Some(candidate) = response.candidates.last()
@@ -291,7 +291,7 @@ if let Some(candidate) = response.candidates.last()
         .contents(contents)
         .tools(vec![tools])
         .build();
-    let final_response = client.generate_content(&request, "gemini-2.5-pro").await?;
+    let final_response = client.generate_content(&request, "gemini-3.1-pro-preview").await?;
     println!("{}", final_response.candidates[0].get_text().unwrap());
 }
 ```
@@ -343,7 +343,7 @@ use geologia::prelude::{CountTokensRequestBuilder, GeminiClient};
 
 let request = CountTokensRequestBuilder::from_prompt("How many tokens is this?").build();
 
-let result = client.count_tokens(&request, "gemini-2.5-pro").await?;
+let result = client.count_tokens(&request, "gemini-3.1-pro-preview").await?;
 println!("Total tokens: {}", result.total_tokens);
 // Optional per-modality breakdown, e.g. [ModalityTokenCount { modality: Text, token_count: 6 }]
 println!("Details: {:?}", result.prompt_tokens_details);
@@ -410,7 +410,8 @@ errors (with status codes and messages from Google), and serialization failures.
 
 ## Common model IDs
 
-- `"gemini-2.5-pro"` — most capable text model
-- `"gemini-2.5-flash"` — fast and cost-efficient
+- `"gemini-3.1-pro-preview"` — most capable text model
+- `"gemini-3.8-flash"` — fast and cost-efficient
+- `"gemini-3.1-flash-lite"` — fastest and cheapest (used by the examples)
 - `"imagen-4.0-generate-001"` — image generation
 - `"text-embedding-004"` — text embeddings
