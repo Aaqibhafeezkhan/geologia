@@ -378,15 +378,14 @@ pub enum BlockReason {
     Unspecified,
     #[serde(rename = "SAFETY")]
     Safety,
+    #[serde(rename = "OTHER")]
+    Other,
     #[serde(rename = "BLOCKLIST")]
     Blocklist,
     #[serde(rename = "PROHIBITED_CONTENT")]
     ProhibitedContent,
     #[serde(rename = "IMAGE_SAFETY")]
     ImageSafety,
-    #[serde(rename = "OTHER")]
-    #[serde(other)]
-    Other,
 }
 
 /// Token usage statistics for a generate content request/response.
@@ -655,20 +654,6 @@ mod tests {
         assert_eq!(
             feedback.block_reason_message.as_deref(),
             Some("The input violates safety policies.")
-        );
-    }
-
-    #[test]
-    fn parses_blocked_prompt_response_with_unknown_block_reason() {
-        let input = r#"{"promptFeedback":{"blockReason":"FUTURE_NEW_REASON"}}"#;
-        let response: GenerateContentResponse = serde_json::from_str(input).unwrap();
-        let GenerateContentResponse::Ok(response) = response else {
-            panic!("expected successful response falling back to Other");
-        };
-
-        assert_eq!(
-            response.prompt_feedback.unwrap().block_reason,
-            Some(super::BlockReason::Other)
         );
     }
 
