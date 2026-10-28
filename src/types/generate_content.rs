@@ -24,6 +24,8 @@ pub struct GenerateContentRequest {
     pub safety_settings: Option<Vec<SafetySetting>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<Content>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_config: Option<ToolConfig>,
 }
 
 impl GenerateContentRequest {
@@ -73,6 +75,12 @@ impl GenerateContentRequestBuilder {
     /// Sets a system instruction to guide the model's behavior.
     pub fn system_instruction(mut self, system_instruction: Content) -> Self {
         self.request.system_instruction = Some(system_instruction);
+        self
+    }
+
+    /// Sets the tool configuration (e.g. function calling mode and allowed functions).
+    pub fn tool_config(mut self, tool_config: ToolConfig) -> Self {
+        self.request.tool_config = Some(tool_config);
         self
     }
 
@@ -128,6 +136,82 @@ impl Default for DynamicRetrievalConfig {
 pub struct GoogleSearchRetrieval {
     /// Configuration controlling when retrieval is triggered.
     pub dynamic_retrieval_config: DynamicRetrievalConfig,
+}
+
+/// Configuration shared by all tools declared in a request.
+///
+/// See <https://ai.google.dev/api/caching#ToolConfig>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfig {
+    /// Controls how the model calls declared functions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_calling_config: Option<FunctionCallingConfig>,
+    /// Configuration for retrieval tools (e.g. the user's location for grounding).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retrieval_config: Option<RetrievalConfig>,
+    /// Whether server-side tool invocations are included in the response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_server_side_tool_invocations: Option<bool>,
+}
+
+/// Configuration for function calling behavior.
+///
+/// See <https://ai.google.dev/api/caching#FunctionCallingConfig>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionCallingConfig {
+    /// The function calling mode. The API defaults to [`FunctionCallingMode::Auto`] when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<FunctionCallingMode>,
+    /// Restricts which declared functions the model may call.
+    ///
+    /// Should only be set when `mode` is [`FunctionCallingMode::Any`] or
+    /// [`FunctionCallingMode::Validated`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_function_names: Option<Vec<String>>,
+}
+
+/// How the model may call declared functions.
+///
+/// See <https://ai.google.dev/api/caching#Mode_1>.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FunctionCallingMode {
+    /// Unspecified mode; do not use.
+    ModeUnspecified,
+    /// The model decides whether to call a function or respond with natural language.
+    Auto,
+    /// The model always calls a function.
+    Any,
+    /// The model never calls a function.
+    None,
+    /// The model may call a function or respond with natural language; function calls are
+    /// validated against the declared schemas.
+    Validated,
+}
+
+/// Configuration for retrieval tools.
+///
+/// See <https://ai.google.dev/api/caching#RetrievalConfig>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalConfig {
+    /// The location of the user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lat_lng: Option<LatLng>,
+    /// The language code of the user (e.g. `"en-US"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language_code: Option<String>,
+}
+
+/// A latitude/longitude pair, in degrees.
+///
+/// See <https://ai.google.dev/api/caching#LatLng>.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct LatLng {
+    pub latitude: f64,
+    pub longitude: f64,
 }
 
 /// Parameters that control how the model generates content.
@@ -585,8 +669,9 @@ mod tests {
     };
 
     use super::{
-        FunctionResponse, FunctionResponseBlob, FunctionResponsePart, GenerateContentRequest,
-        GenerateContentResponse, GenerateContentResponseResult, Scheduling,
+        FunctionCallingConfig, FunctionCallingMode, FunctionResponse, FunctionResponseBlob,
+        FunctionResponsePart, GenerateContentRequest, GenerateContentResponse,
+        GenerateContentResponseResult, LatLng, RetrievalConfig, Scheduling, ToolConfig,
     };
 
     fn part(response: FunctionResponse) -> Part {
@@ -597,6 +682,114 @@ mod tests {
             media_resolution: None,
             data: PartData::FunctionResponse(response),
         }
+    }
+
+    #[test]
+    fn request_without_tool_config_omits_field() -> serde_json::Result<()> {
+        let request = GenerateContentRequest::builder().build();
+
+        let value = serde_json::to_value(&request)?;
+
+        assert_eq!(value, json!({ "contents": [] }));
+        Ok(())
+    }
+
+    #[test]
+    fn request_serializes_function_calling_config() -> serde_json::Result<()> {
+        let request = GenerateContentRequest::builder()
+            .tool_config(ToolConfig {
+                function_calling_config: Some(FunctionCallingConfig {
+                    mode: Some(FunctionCallingMode::Any),
+                    allowed_function_names: Some(vec![
+                        "get_weather".to_string(),
+                        "get_time".to_string(),
+                    ]),
+                }),
+                ..Default::default()
+            })
+            .build();
+
+        let value = serde_json::to_value(&request)?;
+
+        assert_eq!(
+            value,
+            json!({
+                "contents": [],
+                "toolConfig": {
+                    "functionCallingConfig": {
+                        "mode": "ANY",
+                        "allowedFunctionNames": ["get_weather", "get_time"]
+                    }
+                }
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn function_calling_mode_round_trips_api_strings() -> serde_json::Result<()> {
+        let cases = [
+            (FunctionCallingMode::ModeUnspecified, "MODE_UNSPECIFIED"),
+            (FunctionCallingMode::Auto, "AUTO"),
+            (FunctionCallingMode::Any, "ANY"),
+            (FunctionCallingMode::None, "NONE"),
+            (FunctionCallingMode::Validated, "VALIDATED"),
+        ];
+
+        for (mode, expected) in cases {
+            assert_eq!(serde_json::to_value(mode)?, json!(expected));
+            assert_eq!(
+                serde_json::from_value::<FunctionCallingMode>(json!(expected))?,
+                mode
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tool_config_omits_unset_optional_fields() -> serde_json::Result<()> {
+        let empty = ToolConfig::default();
+        let nested = ToolConfig {
+            function_calling_config: Some(FunctionCallingConfig::default()),
+            retrieval_config: Some(RetrievalConfig::default()),
+            include_server_side_tool_invocations: None,
+        };
+
+        assert_eq!(serde_json::to_value(&empty)?, json!({}));
+        assert_eq!(
+            serde_json::to_value(&nested)?,
+            json!({ "functionCallingConfig": {}, "retrievalConfig": {} })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tool_config_serializes_retrieval_config() -> serde_json::Result<()> {
+        let config = ToolConfig {
+            retrieval_config: Some(RetrievalConfig {
+                lat_lng: Some(LatLng {
+                    latitude: 51.5,
+                    longitude: -0.125,
+                }),
+                language_code: Some("en-GB".to_string()),
+            }),
+            include_server_side_tool_invocations: Some(true),
+            ..Default::default()
+        };
+
+        let value = serde_json::to_value(&config)?;
+
+        assert_eq!(
+            value,
+            json!({
+                "retrievalConfig": {
+                    "latLng": { "latitude": 51.5, "longitude": -0.125 },
+                    "languageCode": "en-GB"
+                },
+                "includeServerSideToolInvocations": true
+            })
+        );
+        Ok(())
     }
 
     #[test]
