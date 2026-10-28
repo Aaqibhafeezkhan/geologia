@@ -154,6 +154,7 @@ use serde_json::json;
 let function = FunctionDeclaration {
     name: "get_weather".to_string(),
     description: "Get current weather for a city".to_string(),
+    behavior: None,
     parameters: None,
     parameters_json_schema: Some(json!({
         "type": "object",

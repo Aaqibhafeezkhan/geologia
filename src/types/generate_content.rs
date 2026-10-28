@@ -1,6 +1,8 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -26,6 +28,25 @@ pub struct GenerateContentRequest {
     pub system_instruction: Option<Content>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_config: Option<ToolConfig>,
+    /// Name of cached content to use as context, in the form `cachedContents/{cachedContent}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_content: Option<String>,
+    /// The service tier used to serve the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+    /// Whether the request and response may be stored by the API.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    /// User-defined metadata labels attached to the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<HashMap<String, String>>,
+    /// A base64-encoded token from a previous [`Candidate::continuation_token`], used to resume
+    /// generation that stopped with `finishReason: CONTINUATION`.
+    ///
+    /// When this is set, `contents` must identically replicate the prompt and conversation
+    /// history from the initial request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuation_token: Option<String>,
 }
 
 impl GenerateContentRequest {
@@ -84,6 +105,39 @@ impl GenerateContentRequestBuilder {
         self
     }
 
+    /// Sets the cached content to use as context (`cachedContents/{cachedContent}`).
+    pub fn cached_content<T: Into<String>>(mut self, cached_content: T) -> Self {
+        self.request.cached_content = Some(cached_content.into());
+        self
+    }
+
+    /// Sets the service tier used to serve the request.
+    pub fn service_tier(mut self, service_tier: ServiceTier) -> Self {
+        self.request.service_tier = Some(service_tier);
+        self
+    }
+
+    /// Sets whether the request and response may be stored by the API.
+    pub fn store(mut self, store: bool) -> Self {
+        self.request.store = Some(store);
+        self
+    }
+
+    /// Sets user-defined metadata labels for the request.
+    pub fn labels(mut self, labels: HashMap<String, String>) -> Self {
+        self.request.labels = Some(labels);
+        self
+    }
+
+    /// Sets a continuation token to resume generation from a previous candidate.
+    ///
+    /// `contents` must identically replicate the prompt and conversation history from the
+    /// initial request. See [`GenerateContentRequest::continuation_token`].
+    pub fn continuation_token<T: Into<String>>(mut self, continuation_token: T) -> Self {
+        self.request.continuation_token = Some(continuation_token.into());
+        self
+    }
+
     /// Consumes the builder and returns the constructed [`GenerateContentRequest`].
     pub fn build(self) -> GenerateContentRequest {
         self.request
@@ -104,11 +158,47 @@ pub struct Tools {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub google_search: Option<GoogleSearch>,
+
+    #[serde(rename = "codeExecution")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_execution: Option<CodeExecution>,
+
+    #[serde(rename = "urlContext")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_context: Option<UrlContext>,
+
+    /// File search tool configuration. See <https://ai.google.dev/api/caching#FileSearch>.
+    #[serde(rename = "fileSearch")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_search: Option<Value>,
+
+    /// Google Maps grounding tool configuration. See <https://ai.google.dev/api/caching#GoogleMaps>.
+    #[serde(rename = "googleMaps")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_maps: Option<Value>,
+
+    /// Computer use tool configuration. See <https://ai.google.dev/api/caching#ComputerUse>.
+    #[serde(rename = "computerUse")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computer_use: Option<Value>,
+
+    /// MCP servers the model may call. See <https://ai.google.dev/api/caching#McpServer>.
+    #[serde(rename = "mcpServers")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Vec<Value>>,
 }
 
 /// Enables the Google Search grounding tool (no configuration required).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GoogleSearch {}
+
+/// Enables the code execution tool (no configuration required).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CodeExecution {}
+
+/// Enables the URL context tool (no configuration required).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct UrlContext {}
 
 /// Configuration for dynamic retrieval in Google Search grounding.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -348,7 +438,7 @@ pub struct SafetySetting {
 /// Categories of potentially harmful content.
 ///
 /// See <https://ai.google.dev/api/generate-content#harmcategory>.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HarmCategory {
     #[serde(rename = "HARM_CATEGORY_UNSPECIFIED")]
     Unspecified,
@@ -360,6 +450,11 @@ pub enum HarmCategory {
     Harassment,
     #[serde(rename = "HARM_CATEGORY_SEXUALLY_EXPLICIT")]
     SexuallyExplicit,
+    /// Deprecated by the API.
+    #[serde(rename = "HARM_CATEGORY_CIVIC_INTEGRITY")]
+    CivicIntegrity,
+    #[serde(rename = "HARM_CATEGORY_JAILBREAK")]
+    Jailbreak,
 }
 
 /// The threshold at which harmful content is blocked.
@@ -403,6 +498,27 @@ pub struct Candidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
     pub index: u32,
+    /// Details on why the model stopped generating.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finish_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_logprobs: Option<f64>,
+    /// See <https://ai.google.dev/api/generate-content#LogprobsResult>.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs_result: Option<Value>,
+    /// See <https://ai.google.dev/api/generate-content#GroundingMetadata>.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grounding_metadata: Option<Value>,
+    /// See <https://ai.google.dev/api/generate-content#UrlContextMetadata>.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_context_metadata: Option<Value>,
+    /// A base64-encoded token returned when `finish_reason` is `CONTINUATION`.
+    ///
+    /// Pass it to [`GenerateContentRequest::continuation_token`] to resume generation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuation_token: Option<String>,
 }
 
 impl Candidate {
@@ -554,7 +670,10 @@ pub enum ServiceTier {
 pub struct FunctionDeclaration {
     pub name: String,
     pub description: String,
-    // TODO: add behaviour field -  https://ai.google.dev/api/caching#Behavior
+    /// Whether the function blocks the conversation while it runs. The API defaults to
+    /// [`Behavior::Blocking`]; currently only supported by `BidiGenerateContent`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavior: Option<Behavior>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -563,6 +682,19 @@ pub struct FunctionDeclaration {
     pub response: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_json_schema: Option<Value>,
+}
+
+/// How a declared function is executed relative to the conversation.
+///
+/// See <https://ai.google.dev/api/caching#Behavior>.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Behavior {
+    Unspecified,
+    /// The system waits for the function response before continuing the conversation.
+    Blocking,
+    /// The system does not wait for the function response and keeps talking to the user.
+    NonBlocking,
 }
 
 /// See <https://ai.google.dev/api/caching#FunctionResponse>.
@@ -620,6 +752,10 @@ pub struct FunctionParametersProperty {
 /// `Result<GenerateContentResponseResult>`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "short-lived wire envelope; boxing the Ok variant would break callers that match on it"
+)]
 pub enum GenerateContentResponse {
     Ok(GenerateContentResponseResult),
     Error(GenerateContentResponseError),
@@ -642,6 +778,45 @@ pub struct GenerateContentResponseResult {
     pub candidates: Vec<Candidate>,
     pub usage_metadata: Option<UsageMetadata>,
     pub prompt_feedback: Option<PromptFeedback>,
+    /// The model version used to generate the response.
+    pub model_version: Option<String>,
+    /// Identifier for this response.
+    pub response_id: Option<String>,
+    /// The status of the model used to generate the response.
+    pub model_status: Option<ModelStatus>,
+}
+
+/// The status of the model that served a request.
+///
+/// See <https://ai.google.dev/api/generate-content#ModelStatus>.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_stage: Option<ModelStage>,
+    /// When the model will be retired, as an RFC 3339 timestamp.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retirement_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// The release stage of a model.
+///
+/// See <https://ai.google.dev/api/generate-content#ModelStage>.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ModelStage {
+    ModelStageUnspecified,
+    /// Deprecated by the API.
+    UnstableExperimental,
+    Experimental,
+    Preview,
+    Stable,
+    Legacy,
+    /// Deprecated by the API.
+    Deprecated,
+    Retired,
 }
 
 /// An error response from the `generateContent` endpoint.
@@ -665,14 +840,184 @@ mod tests {
     use serde_json::json;
 
     use crate::types::{
-        Candidate, Content, Modality, Part, PartData, Role, ServiceTier, UsageMetadata,
+        Candidate, CodeExecution, Content, Modality, Part, PartData, Role, ServiceTier, Tools,
+        UrlContext, UsageMetadata,
     };
 
     use super::{
-        FunctionCallingConfig, FunctionCallingMode, FunctionResponse, FunctionResponseBlob,
-        FunctionResponsePart, GenerateContentRequest, GenerateContentResponse,
-        GenerateContentResponseResult, LatLng, RetrievalConfig, Scheduling, ToolConfig,
+        Behavior, FunctionCallingConfig, FunctionCallingMode, FunctionResponse,
+        FunctionResponseBlob, FunctionResponsePart, GenerateContentRequest,
+        GenerateContentResponse, GenerateContentResponseResult, HarmCategory, LatLng, ModelStage,
+        RetrievalConfig, Scheduling, ToolConfig,
     };
+
+    #[test]
+    fn parses_response_with_model_status_and_candidate_metadata() -> serde_json::Result<()> {
+        let input = json!({
+            "candidates": [{
+                "content": { "role": "model", "parts": [{ "text": "Partial answer" }] },
+                "finishReason": "CONTINUATION",
+                "finishMessage": "Generation paused.",
+                "index": 0,
+                "tokenCount": 3,
+                "avgLogprobs": -0.25,
+                "groundingMetadata": { "webSearchQueries": ["swallow airspeed"] },
+                "continuationToken": "Y29udGludWU="
+            }],
+            "modelVersion": "gemini-3-pro-preview",
+            "responseId": "2uUdaYPkG73WvdIP2aPs2Ak",
+            "modelStatus": {
+                "modelStage": "PREVIEW",
+                "retirementTime": "2027-01-01T00:00:00Z",
+                "message": "Preview model."
+            }
+        });
+
+        let response: GenerateContentResponseResult = serde_json::from_value(input)?;
+
+        assert_eq!(
+            response.model_version.as_deref(),
+            Some("gemini-3-pro-preview")
+        );
+        assert_eq!(
+            response.response_id.as_deref(),
+            Some("2uUdaYPkG73WvdIP2aPs2Ak")
+        );
+        let status = response.model_status.as_ref();
+        assert_eq!(
+            status.and_then(|s| s.model_stage),
+            Some(ModelStage::Preview)
+        );
+        assert_eq!(
+            status.and_then(|s| s.retirement_time.as_deref()),
+            Some("2027-01-01T00:00:00Z")
+        );
+        let candidate = &response.candidates[0];
+        assert_eq!(
+            candidate.finish_message.as_deref(),
+            Some("Generation paused.")
+        );
+        assert_eq!(candidate.token_count, Some(3));
+        assert_eq!(candidate.avg_logprobs, Some(-0.25));
+        assert_eq!(
+            candidate.grounding_metadata,
+            Some(json!({ "webSearchQueries": ["swallow airspeed"] }))
+        );
+        assert_eq!(
+            candidate.continuation_token.as_deref(),
+            Some("Y29udGludWU=")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn model_stage_round_trips_api_strings() -> serde_json::Result<()> {
+        let cases = [
+            (ModelStage::ModelStageUnspecified, "MODEL_STAGE_UNSPECIFIED"),
+            (ModelStage::UnstableExperimental, "UNSTABLE_EXPERIMENTAL"),
+            (ModelStage::Experimental, "EXPERIMENTAL"),
+            (ModelStage::Preview, "PREVIEW"),
+            (ModelStage::Stable, "STABLE"),
+            (ModelStage::Legacy, "LEGACY"),
+            (ModelStage::Deprecated, "DEPRECATED"),
+            (ModelStage::Retired, "RETIRED"),
+        ];
+
+        for (stage, expected) in cases {
+            assert_eq!(serde_json::to_value(stage)?, json!(expected));
+            assert_eq!(
+                serde_json::from_value::<ModelStage>(json!(expected))?,
+                stage
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn behavior_round_trips_api_strings() -> serde_json::Result<()> {
+        let cases = [
+            (Behavior::Unspecified, "UNSPECIFIED"),
+            (Behavior::Blocking, "BLOCKING"),
+            (Behavior::NonBlocking, "NON_BLOCKING"),
+        ];
+
+        for (behavior, expected) in cases {
+            assert_eq!(serde_json::to_value(behavior)?, json!(expected));
+            assert_eq!(
+                serde_json::from_value::<Behavior>(json!(expected))?,
+                behavior
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn new_harm_categories_round_trip_api_strings() -> serde_json::Result<()> {
+        let cases = [
+            (
+                HarmCategory::CivicIntegrity,
+                "HARM_CATEGORY_CIVIC_INTEGRITY",
+            ),
+            (HarmCategory::Jailbreak, "HARM_CATEGORY_JAILBREAK"),
+        ];
+
+        for (category, expected) in cases {
+            assert_eq!(serde_json::to_value(&category)?, json!(expected));
+            assert_eq!(
+                serde_json::from_value::<HarmCategory>(json!(expected))?,
+                category
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn request_serializes_new_optional_fields() -> serde_json::Result<()> {
+        let request = GenerateContentRequest::builder()
+            .cached_content("cachedContents/abc")
+            .service_tier(ServiceTier::Flex)
+            .store(false)
+            .labels([("team".to_string(), "search".to_string())].into())
+            .continuation_token("Y29udGludWU=")
+            .build();
+
+        let value = serde_json::to_value(&request)?;
+
+        assert_eq!(
+            value,
+            json!({
+                "contents": [],
+                "cachedContent": "cachedContents/abc",
+                "serviceTier": "flex",
+                "store": false,
+                "labels": { "team": "search" },
+                "continuationToken": "Y29udGludWU="
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tools_serialize_new_tool_fields_and_omit_unset_ones() -> serde_json::Result<()> {
+        let empty = Tools::default();
+        let tools = Tools {
+            code_execution: Some(CodeExecution {}),
+            url_context: Some(UrlContext {}),
+            google_maps: Some(json!({ "enableWidget": true })),
+            ..Default::default()
+        };
+
+        assert_eq!(serde_json::to_value(&empty)?, json!({}));
+        assert_eq!(
+            serde_json::to_value(&tools)?,
+            json!({
+                "codeExecution": {},
+                "urlContext": {},
+                "googleMaps": { "enableWidget": true }
+            })
+        );
+        Ok(())
+    }
 
     fn part(response: FunctionResponse) -> Part {
         Part {

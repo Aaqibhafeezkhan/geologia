@@ -52,6 +52,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sum_function = FunctionDeclaration {
         name: String::from("sbrubbles"),
         description: String::from("Calculates the sbrubbles value"),
+        behavior: None,
         parameters: None,
         parameters_json_schema: Some(sum_parameters),
         response: None,
