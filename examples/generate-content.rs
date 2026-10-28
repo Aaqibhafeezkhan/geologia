@@ -25,5 +25,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     println!("Response: {:?}", response.candidates[0].get_text().unwrap());
+    println!("Model version: {:?}", response.model_version);
+    println!("Response ID: {:?}", response.response_id);
+    println!("Model status: {:?}", response.model_status);
     Ok(())
 }

@@ -9,7 +9,7 @@ use geologia::{
 };
 use tokio_stream::StreamExt;
 
-static MODEL: &str = "gemini-2.5-flash";
+static MODEL: &str = "gemini-3.1-flash-lite";
 
 #[tokio::main]
 pub async fn main() {
