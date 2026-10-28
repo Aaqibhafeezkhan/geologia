@@ -350,7 +350,31 @@ println!("Details: {:?}", result.prompt_tokens_details);
 ```
 
 Only `total_tokens` is always present. `total_billable_characters` is Vertex AI only and is
-`None` on the Gemini API. See `examples/count-tokens.rs` for a runnable version.
+`None` on the Gemini API.
+
+To count a full request, including system instruction, tools and multi-turn history, wrap a
+`GenerateContentRequest`. `count_tokens` sets the inner request's `model` from its `model`
+argument, so you don't repeat it:
+
+```rust
+use geologia::prelude::{Content, CountTokensRequestBuilder, GenerateContentRequest, Role};
+
+let generate_content_request = GenerateContentRequest::builder()
+    .system_instruction(Content::builder().add_text_part("Answer in one sentence.").build())
+    .contents(vec![
+        Content::builder().role(Role::User).add_text_part("How many tokens is this?").build(),
+    ])
+    .tools(tools)
+    .build();
+
+let request =
+    CountTokensRequestBuilder::from_generate_content_request(generate_content_request).build();
+let result = client.count_tokens(&request, "gemini-3.1-pro-preview").await?;
+```
+
+`CountTokensRequest::contents` is a `Vec<Content>`; use `CountTokensRequestBuilder::contents` to
+count a multi-turn history without the rest of a request. See `examples/count-tokens.rs` for a
+runnable version.
 
 ---
 

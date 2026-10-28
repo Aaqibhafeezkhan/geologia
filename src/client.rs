@@ -163,7 +163,10 @@ impl GeminiClient {
         }
     }
 
-    /// Counts the number of tokens in the given content.
+    /// Counts the number of tokens in the given content or `generateContent` request.
+    ///
+    /// When `request` carries a [`GenerateContentRequest`],
+    /// its `model` is set from `model`.
     pub async fn count_tokens(
         &self,
         request: &CountTokensRequest,
@@ -175,7 +178,7 @@ impl GeminiClient {
             .client
             .post(&endpoint_url)
             .header("x-goog-api-key", &self.api_key)
-            .json(&request)
+            .json(&request.with_model(model))
             .send()
             .await?;
         let resp = Self::error_for_status(resp).await?;
