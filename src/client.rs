@@ -12,8 +12,8 @@ use tracing::error;
 /// Async client for the Google Gemini API.
 ///
 /// Provides methods for content generation, streaming, token counting, text embeddings,
-/// and image prediction. All requests are authenticated with an API key passed at
-/// construction time.
+/// image prediction, and context caching. All requests are authenticated with an API key
+/// passed at construction time.
 ///
 /// # Example
 ///
@@ -223,29 +223,202 @@ impl GeminiClient {
             }
         }
     }
+
+    /// Creates a new explicit context cache resource.
+    ///
+    /// Context caching allows pre-computing and reusing large prefixes (e.g. documents, system
+    /// instructions, or tool declarations) across requests.
+    ///
+    /// The `model` field on `request` is required and will be automatically prefixed with
+    /// `models/` if omitted.
+    ///
+    /// See <https://ai.google.dev/api/caching#cachedContents.create>.
+    pub async fn create_cached_content(
+        &self,
+        request: &CachedContent,
+    ) -> GeminiResult<CachedContent> {
+        let endpoint_url = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
+        let mut body = request.clone();
+        if let Some(ref model) = body.model
+            && !model.starts_with("models/")
+        {
+            body.model = Some(format!("models/{model}"));
+        }
+        let resp = self
+            .client
+            .post(endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("create_cached_content response: {:?}", txt_json);
+
+        match serde_json::from_str::<CachedContent>(&txt_json) {
+            Ok(content) => Ok(content),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Retrieves metadata for an existing cached content resource by name or ID.
+    ///
+    /// `name` can be either the full resource name (e.g. `cachedContents/abc123xyz`)
+    /// or just the resource ID (e.g. `abc123xyz`).
+    ///
+    /// See <https://ai.google.dev/api/caching#cachedContents.get>.
+    pub async fn get_cached_content(&self, name: &str) -> GeminiResult<CachedContent> {
+        let endpoint_url = cached_content_resource_url(name);
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("get_cached_content response: {:?}", txt_json);
+
+        match serde_json::from_str::<CachedContent>(&txt_json) {
+            Ok(content) => Ok(content),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Lists existing cached content resources, with optional pagination.
+    ///
+    /// Pass `page_size` (up to 50) and `page_token` to paginate through results.
+    ///
+    /// See <https://ai.google.dev/api/caching#cachedContents.list>.
+    pub async fn list_cached_contents(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> GeminiResult<ListCachedContentsResponse> {
+        let mut endpoint_url =
+            "https://generativelanguage.googleapis.com/v1beta/cachedContents".to_string();
+        let mut query_params = Vec::new();
+        if let Some(size) = page_size {
+            query_params.push(format!("pageSize={size}"));
+        }
+        if let Some(token) = page_token {
+            query_params.push(format!("pageToken={token}"));
+        }
+        if !query_params.is_empty() {
+            endpoint_url.push('?');
+            endpoint_url.push_str(&query_params.join("&"));
+        }
+
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("list_cached_contents response: {:?}", txt_json);
+
+        match serde_json::from_str::<ListCachedContentsResponse>(&txt_json) {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Updates the expiration (`ttl` or `expire_time`) of an existing cached content resource.
+    ///
+    /// Other fields of a cached content resource are immutable.
+    ///
+    /// If `update_mask` is `None`, the field mask is automatically derived based on whichever
+    /// of `request.ttl` and `request.expire_time` are set.
+    ///
+    /// See <https://ai.google.dev/api/caching#cachedContents.patch>.
+    pub async fn update_cached_content(
+        &self,
+        name: &str,
+        request: &CachedContent,
+        update_mask: Option<&str>,
+    ) -> GeminiResult<CachedContent> {
+        let mut endpoint_url = cached_content_resource_url(name);
+        let mask = update_mask.map(str::to_string).or_else(|| {
+            let mut fields = Vec::new();
+            if request.ttl.is_some() {
+                fields.push("ttl");
+            }
+            if request.expire_time.is_some() {
+                fields.push("expireTime");
+            }
+            if fields.is_empty() {
+                None
+            } else {
+                Some(fields.join(","))
+            }
+        });
+        if let Some(mask) = mask {
+            endpoint_url.push_str(&format!("?updateMask={mask}"));
+        }
+
+        let resp = self
+            .client
+            .patch(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(request)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("update_cached_content response: {:?}", txt_json);
+
+        match serde_json::from_str::<CachedContent>(&txt_json) {
+            Ok(content) => Ok(content),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Deletes an existing cached content resource by name or ID.
+    ///
+    /// `name` can be either the full resource name (e.g. `cachedContents/abc123xyz`)
+    /// or just the resource ID (e.g. `abc123xyz`).
+    ///
+    /// See <https://ai.google.dev/api/caching#cachedContents.delete>.
+    pub async fn delete_cached_content(&self, name: &str) -> GeminiResult<()> {
+        let endpoint_url = cached_content_resource_url(name);
+        let resp = self
+            .client
+            .delete(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let _ = Self::error_for_status(resp).await?;
+        Ok(())
+    }
+}
+
+fn cached_content_resource_url(name: &str) -> String {
+    let path = if name.starts_with("cachedContents/") {
+        name.to_string()
+    } else {
+        format!("cachedContents/{name}")
+    };
+    format!("https://generativelanguage.googleapis.com/v1beta/{path}")
 }
 
 #[cfg(test)]
-mod tests {
-    use super::GeminiClient;
-    use crate::network::event_source::ServerSentEvent;
-
-    #[test]
-    fn stream_parses_blocked_prompt_response() {
-        let event = Ok(ServerSentEvent {
-            data: Some(
-                r#"{"promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"promptTokenCount":5}}"#
-                    .to_string(),
-            ),
-            ..Default::default()
-        });
-
-        let result = GeminiClient::parse_event(event).expect("SSE event should produce a result");
-        let response = result.expect("blocked prompt response should parse");
-        assert!(response.candidates.is_empty());
-        assert_eq!(
-            response.prompt_feedback.unwrap().block_reason,
-            Some(crate::prelude::BlockReason::Safety)
-        );
-    }
-}
+#[path = "client_tests.rs"]
+mod tests;

@@ -3,6 +3,7 @@
 
 //! Request and response types for the Gemini API.
 
+mod cached_content;
 mod common;
 mod count_tokens;
 mod error;
@@ -10,6 +11,7 @@ mod generate_content;
 mod predict_image;
 mod text_embeddings;
 
+pub use cached_content::*;
 pub use common::*;
 pub use count_tokens::*;
 pub use error::*;

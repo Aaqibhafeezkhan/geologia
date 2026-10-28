@@ -378,6 +378,54 @@ runnable version.
 
 ---
 
+## Context caching (explicit caching)
+
+Pre-compute and reuse large prefix tokens (such as documents, system instructions, or tool
+declarations) across requests:
+
+```rust
+use geologia::prelude::{CachedContent, Content, GeminiClient, GenerateContentRequest, Role};
+
+let client = GeminiClient::new(std::env::var("GEMINI_API_KEY")?);
+
+// 1. Create a cache (must meet the model's minimum token threshold, e.g. 2,048 tokens).
+let cache_request = CachedContent::builder()
+    .model("gemini-2.5-flash")
+    .display_name("Reference Doc")
+    .system_instruction(Content::builder().add_text_part("You are a helpful analyst.").build())
+    .contents(vec![
+        Content::builder().role(Role::User).add_text_part(large_document_text).build(),
+    ])
+    .ttl("300s")
+    .build();
+
+let cache = client.create_cached_content(&cache_request).await?;
+let cache_name = cache.name.unwrap();
+
+// 2. Reference the cache in generate_content.
+let request = GenerateContentRequest::builder()
+    .cached_content(&cache_name)
+    .contents(vec![
+        Content::builder().role(Role::User).add_text_part("Summarize the key points.").build(),
+    ])
+    .build();
+
+let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+
+// 3. Delete the cache when done.
+client.delete_cached_content(&cache_name).await?;
+```
+
+Other client methods:
+- `client.get_cached_content(name)`: fetch cache metadata and token usage.
+- `client.list_cached_contents(page_size, page_token)`: paginated listing of caches.
+- `client.update_cached_content(name, &patch, update_mask)`: update cache TTL or expiration.
+- `client.delete_cached_content(name)`: explicitly remove a cache.
+
+See `examples/context-caching.rs` for a runnable version.
+
+---
+
 ## Text embeddings
 
 ```rust
