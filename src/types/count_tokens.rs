@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-use super::Content;
+use super::{Content, ModalityTokenCount};
 
 /// Request body for the `countTokens` endpoint.
 ///
@@ -71,11 +71,61 @@ impl CountTokensResponse {
 }
 
 /// A successful response from the `countTokens` endpoint.
+///
+/// See <https://ai.google.dev/api/tokens#response-body>.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensResponseResult {
     /// The total number of tokens in the input.
     pub total_tokens: i32,
-    /// The total number of billable characters in the input.
-    pub total_billable_characters: u32,
+    /// The total number of billable characters in the input. Only returned by Vertex AI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_billable_characters: Option<u32>,
+    /// The number of tokens in the cached part of the prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_content_token_count: Option<u32>,
+    /// The per-modality breakdown of tokens in the request input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<Vec<ModalityTokenCount>>,
+    /// The per-modality breakdown of tokens in the cached content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_tokens_details: Option<Vec<ModalityTokenCount>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Modality;
+
+    #[test]
+    fn parses_gemini_response() {
+        let body = r#"{
+            "totalTokens": 2,
+            "systemInstructionsTokens": {},
+            "contentTokens": [{ "partTokens": [2] }],
+            "promptTokensDetails": [{ "modality": "TEXT", "tokenCount": 2 }]
+        }"#;
+
+        let result = serde_json::from_str::<CountTokensResponse>(body)
+            .unwrap()
+            .into_result()
+            .unwrap();
+        assert_eq!(result.total_tokens, 2);
+        assert_eq!(result.total_billable_characters, None);
+        assert_eq!(result.cached_content_token_count, None);
+        let details = result.prompt_tokens_details.unwrap();
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0].modality, Modality::Text);
+        assert_eq!(details[0].token_count, 2);
+        assert!(result.cache_tokens_details.is_none());
+    }
+
+    #[test]
+    fn parses_response_with_only_total_tokens() {
+        let result: CountTokensResponseResult =
+            serde_json::from_str(r#"{"totalTokens": 7}"#).unwrap();
+        assert_eq!(result.total_tokens, 7);
+        assert_eq!(result.total_billable_characters, None);
+        assert!(result.prompt_tokens_details.is_none());
+    }
 }

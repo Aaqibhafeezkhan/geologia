@@ -270,20 +270,18 @@ std::fs::write("output.jpg", &image.bytes_base64_encoded)?;
 ## Token counting
 
 ```rust
-use geologia::prelude::{Content, CountTokensRequest, GeminiClient, Role};
+use geologia::prelude::{CountTokensRequestBuilder, GeminiClient};
 
-let request = CountTokensRequest {
-    contents: vec![
-        Content::builder()
-            .role(Role::User)
-            .add_text_part("How many tokens is this?")
-            .build(),
-    ],
-};
+let request = CountTokensRequestBuilder::from_prompt("How many tokens is this?").build();
 
 let result = client.count_tokens(&request, "gemini-2.5-pro").await?;
 println!("Total tokens: {}", result.total_tokens);
+// Optional per-modality breakdown, e.g. [ModalityTokenCount { modality: Text, token_count: 6 }]
+println!("Details: {:?}", result.prompt_tokens_details);
 ```
+
+Only `total_tokens` is always present. `total_billable_characters` is Vertex AI only and is
+`None` on the Gemini API. See `examples/count-tokens.rs` for a runnable version.
 
 ---
 
