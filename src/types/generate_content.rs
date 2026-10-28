@@ -348,7 +348,7 @@ pub struct CitationMetadata {
 }
 
 /// A safety rating for a piece of content across a specific harm category.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SafetyRating {
     pub category: String,
@@ -359,14 +359,19 @@ pub struct SafetyRating {
 }
 
 /// Feedback explaining why a prompt was blocked.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// See <https://ai.google.dev/api/generate-content#PromptFeedback>.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptFeedback {
     pub block_reason: Option<BlockReason>,
+    pub block_reason_message: Option<String>,
     pub safety_ratings: Option<Vec<SafetyRating>>,
 }
 
 /// Reason a prompt was blocked.
+///
+/// See <https://ai.google.dev/api/generate-content#BlockReason>.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlockReason {
     #[serde(rename = "BLOCK_REASON_UNSPECIFIED")]
@@ -618,14 +623,38 @@ mod tests {
 
     #[test]
     fn parses_blocked_prompt_response() {
-        let input = r#"{"promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"promptTokenCount":5}}"#;
+        let input =
+            r#"{"promptFeedback":{"blockReason":"SAFETY"},"usageMetadata":{"promptTokenCount":5}}"#;
         let response: GenerateContentResponse = serde_json::from_str(input).unwrap();
         let GenerateContentResponse::Ok(response) = response else {
             panic!("expected successful response with prompt feedback");
         };
 
         assert!(response.candidates.is_empty());
-        assert_eq!(response.prompt_feedback.unwrap().block_reason, Some(super::BlockReason::Safety));
+        assert_eq!(
+            response.prompt_feedback.unwrap().block_reason,
+            Some(super::BlockReason::Safety)
+        );
+    }
+
+    #[test]
+    fn parses_blocked_prompt_response_with_message() {
+        let input = r#"{"promptFeedback":{"blockReason":"PROHIBITED_CONTENT","blockReasonMessage":"The input violates safety policies."}}"#;
+        let response: GenerateContentResponse = serde_json::from_str(input).unwrap();
+        let GenerateContentResponse::Ok(response) = response else {
+            panic!("expected successful response with prompt feedback");
+        };
+
+        assert!(response.candidates.is_empty());
+        let feedback = response.prompt_feedback.unwrap();
+        assert_eq!(
+            feedback.block_reason,
+            Some(super::BlockReason::ProhibitedContent)
+        );
+        assert_eq!(
+            feedback.block_reason_message.as_deref(),
+            Some("The input violates safety policies.")
+        );
     }
 
     #[test]
