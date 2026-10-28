@@ -35,6 +35,12 @@ tokio-stream = "0.1"
 ```rust
 let api_key = std::env::var("GEMINI_API_KEY")?;
 let client = GeminiClient::new(api_key);
+
+// Or configure a custom base URL or reqwest::Client via the builder:
+let client = GeminiClient::builder(api_key)
+    .base_url("https://my-proxy.internal/v1beta")
+    .http_client(custom_http_client)
+    .build();
 ```
 
 ## Imports

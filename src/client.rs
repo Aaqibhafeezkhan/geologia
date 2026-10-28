@@ -9,11 +9,17 @@ use tokio_stream::{Stream, StreamExt};
 use tokio_util::codec::LinesCodecError;
 use tracing::error;
 
+/// Default base URL for the Gemini Developer API.
+pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+
 /// Async client for the Google Gemini API.
 ///
 /// Provides methods for content generation, streaming, token counting, text embeddings,
 /// image prediction, and context caching. All requests are authenticated with an API key
 /// passed at construction time.
+///
+/// Use [`GeminiClient::builder`] for advanced configuration, such as pointing at a mock
+/// server or sharing a configured [`reqwest::Client`].
 ///
 /// # Example
 ///
@@ -33,15 +39,33 @@ use tracing::error;
 pub struct GeminiClient {
     client: reqwest::Client,
     api_key: String,
+    base_url: String,
 }
 
 impl GeminiClient {
     /// Creates a new [`GeminiClient`] with the given API key.
     pub fn new(api_key: String) -> Self {
-        GeminiClient {
-            client: reqwest::Client::new(),
-            api_key,
-        }
+        Self::builder(api_key).build()
+    }
+
+    /// Creates a builder for configuring and constructing a [`GeminiClient`].
+    pub fn builder(api_key: impl Into<String>) -> GeminiClientBuilder {
+        GeminiClientBuilder::new(api_key)
+    }
+
+    /// Returns the configured base URL for this client.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Returns a reference to the underlying [`reqwest::Client`].
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
+    /// Returns the API key used by this client.
+    pub fn api_key(&self) -> &str {
+        &self.api_key
     }
 
     /// Returns the response unchanged on a success status, otherwise reads the response
@@ -73,9 +97,8 @@ impl GeminiClient {
         request: &GenerateContentRequest,
         model: &str,
     ) -> GeminiResult<impl Stream<Item = GeminiResult<GenerateContentResponseResult>>> {
-        let endpoint_url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse"
-        );
+        let endpoint_url =
+            self.endpoint_url(&format!("models/{model}:streamGenerateContent?alt=sse"));
         let client = self.client.clone();
         let request = request.clone();
         let resp = client
@@ -110,9 +133,7 @@ impl GeminiClient {
         request: &GenerateContentRequest,
         model: &str,
     ) -> GeminiResult<GenerateContentResponseResult> {
-        let endpoint_url: String = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        );
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:generateContent"));
         let resp = self
             .client
             .post(&endpoint_url)
@@ -140,8 +161,7 @@ impl GeminiClient {
         request: &TextEmbeddingRequest,
         model: &str,
     ) -> GeminiResult<TextEmbeddingResponseOk> {
-        let endpoint_url =
-            format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:predict");
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:predict"));
         let resp = self
             .client
             .post(&endpoint_url)
@@ -172,8 +192,7 @@ impl GeminiClient {
         request: &CountTokensRequest,
         model: &str,
     ) -> GeminiResult<CountTokensResponseResult> {
-        let endpoint_url =
-            format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens");
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:countTokens"));
         let resp = self
             .client
             .post(&endpoint_url)
@@ -201,8 +220,7 @@ impl GeminiClient {
         request: &PredictImageRequest,
         model: &str,
     ) -> GeminiResult<PredictImageResponse> {
-        let endpoint_url =
-            format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:predict");
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:predict"));
 
         let resp = self
             .client
@@ -237,7 +255,7 @@ impl GeminiClient {
         &self,
         request: &CachedContent,
     ) -> GeminiResult<CachedContent> {
-        let endpoint_url = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
+        let endpoint_url = self.endpoint_url("cachedContents");
         let mut body = request.clone();
         if let Some(ref model) = body.model
             && !model.starts_with("models/")
@@ -246,7 +264,7 @@ impl GeminiClient {
         }
         let resp = self
             .client
-            .post(endpoint_url)
+            .post(&endpoint_url)
             .header("x-goog-api-key", &self.api_key)
             .json(&body)
             .send()
@@ -272,7 +290,7 @@ impl GeminiClient {
     ///
     /// See <https://ai.google.dev/api/caching#cachedContents.get>.
     pub async fn get_cached_content(&self, name: &str) -> GeminiResult<CachedContent> {
-        let endpoint_url = cached_content_resource_url(name);
+        let endpoint_url = self.cached_content_resource_url(name);
         let resp = self
             .client
             .get(&endpoint_url)
@@ -303,8 +321,7 @@ impl GeminiClient {
         page_size: Option<u32>,
         page_token: Option<&str>,
     ) -> GeminiResult<ListCachedContentsResponse> {
-        let mut endpoint_url =
-            "https://generativelanguage.googleapis.com/v1beta/cachedContents".to_string();
+        let mut endpoint_url = self.endpoint_url("cachedContents");
         let mut query_params = Vec::new();
         if let Some(size) = page_size {
             query_params.push(format!("pageSize={size}"));
@@ -351,7 +368,7 @@ impl GeminiClient {
         request: &CachedContent,
         update_mask: Option<&str>,
     ) -> GeminiResult<CachedContent> {
-        let mut endpoint_url = cached_content_resource_url(name);
+        let mut endpoint_url = self.cached_content_resource_url(name);
         let mask = update_mask.map(str::to_string).or_else(|| {
             let mut fields = Vec::new();
             if request.ttl.is_some() {
@@ -398,7 +415,7 @@ impl GeminiClient {
     ///
     /// See <https://ai.google.dev/api/caching#cachedContents.delete>.
     pub async fn delete_cached_content(&self, name: &str) -> GeminiResult<()> {
-        let endpoint_url = cached_content_resource_url(name);
+        let endpoint_url = self.cached_content_resource_url(name);
         let resp = self
             .client
             .delete(&endpoint_url)
@@ -408,15 +425,79 @@ impl GeminiClient {
         let _ = Self::error_for_status(resp).await?;
         Ok(())
     }
+
+    fn cached_content_resource_url(&self, name: &str) -> String {
+        let path = if name.starts_with("cachedContents/") {
+            name.to_string()
+        } else {
+            format!("cachedContents/{name}")
+        };
+        self.endpoint_url(&path)
+    }
+
+    fn endpoint_url(&self, path: &str) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        let path = path.trim_start_matches('/');
+        format!("{base}/{path}")
+    }
 }
 
-fn cached_content_resource_url(name: &str) -> String {
-    let path = if name.starts_with("cachedContents/") {
-        name.to_string()
-    } else {
-        format!("cachedContents/{name}")
-    };
-    format!("https://generativelanguage.googleapis.com/v1beta/{path}")
+/// Builder for constructing a [`GeminiClient`] with custom configuration.
+///
+/// Created via [`GeminiClient::builder`].
+///
+/// # Example
+///
+/// ```no_run
+/// use geologia::prelude::*;
+///
+/// let client = GeminiClient::builder("YOUR_API_KEY")
+///     .base_url("https://my-proxy.example.com/v1beta")
+///     .build();
+/// ```
+#[derive(Clone, Debug)]
+pub struct GeminiClientBuilder {
+    api_key: String,
+    base_url: Option<String>,
+    client: Option<reqwest::Client>,
+}
+
+impl GeminiClientBuilder {
+    /// Creates a new builder for the given API key.
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url: None,
+            client: None,
+        }
+    }
+
+    /// Sets the base URL for API requests.
+    ///
+    /// Defaults to [`DEFAULT_BASE_URL`].
+    pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = Some(base_url.into());
+        self
+    }
+
+    /// Sets a custom [`reqwest::Client`] for making HTTP requests.
+    ///
+    /// When omitted, a default client is created via [`reqwest::Client::new`].
+    pub fn http_client(mut self, client: reqwest::Client) -> Self {
+        self.client = Some(client);
+        self
+    }
+
+    /// Consumes the builder and returns the configured [`GeminiClient`].
+    pub fn build(self) -> GeminiClient {
+        GeminiClient {
+            client: self.client.unwrap_or_default(),
+            api_key: self.api_key,
+            base_url: self
+                .base_url
+                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]

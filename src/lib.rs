@@ -25,6 +25,19 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Advanced configuration
+//!
+//! Use [`GeminiClient::builder`](crate::prelude::GeminiClient::builder) to configure a custom base URL (e.g. for proxies,
+//! local mock servers, or offline testing) or to supply a custom [`reqwest::Client`]:
+//!
+//! ```no_run
+//! use geologia::prelude::*;
+//!
+//! let client = GeminiClient::builder("YOUR_API_KEY")
+//!     .base_url("https://my-proxy.example.com/v1beta")
+//!     .build();
+//! ```
 
 mod client;
 pub mod error;
@@ -33,8 +46,8 @@ mod types;
 
 /// Convenience re-exports of the most commonly used types.
 ///
-/// Importing `use geologia::prelude::*` brings [`GeminiClient`](crate::prelude::GeminiClient)
-/// and all request/response types into scope.
+/// Importing `use geologia::prelude::*` brings [`GeminiClient`](crate::prelude::GeminiClient),
+/// [`GeminiClientBuilder`](crate::prelude::GeminiClientBuilder), and all request/response types into scope.
 pub mod prelude {
     pub use crate::client::*;
     pub use crate::types::*;

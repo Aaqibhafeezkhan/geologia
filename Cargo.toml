@@ -26,3 +26,4 @@ image = "0.25.10"
 indicatif = "0.18.4"
 tokio = { version = "1.51.0", features = ["full"] }
 tracing-subscriber = "0.3.23"
+wiremock = "0.6.5"
