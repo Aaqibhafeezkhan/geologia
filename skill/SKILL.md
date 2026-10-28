@@ -138,6 +138,74 @@ let request = GenerateContentRequest::builder()
     .build();
 ```
 
+## Other request options
+
+```rust
+use std::collections::HashMap;
+use geologia::prelude::{GenerateContentRequest, ServiceTier};
+
+let request = GenerateContentRequest::builder()
+    .contents(vec![...])
+    .cached_content("cachedContents/my-cache") // reuse a context cache
+    .service_tier(ServiceTier::Flex)
+    .store(false)
+    .labels(HashMap::from([("team".to_string(), "search".to_string())]))
+    .build();
+```
+
+## Response metadata
+
+```rust
+let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+println!("{:?} {:?}", response.model_version, response.response_id);
+if let Some(status) = &response.model_status {
+    println!("stage: {:?}, retires: {:?}", status.model_stage, status.retirement_time);
+}
+```
+
+## Continuing generation
+
+When a candidate stops with `finish_reason == Some("CONTINUATION")`, it carries a
+`continuation_token`. Resend the **identical** `contents` with that token to resume:
+
+```rust
+let candidate = &response.candidates[0];
+if candidate.finish_reason.as_deref() == Some("CONTINUATION") {
+    if let Some(token) = &candidate.continuation_token {
+        let request = GenerateContentRequest::builder()
+            .contents(original_contents.clone()) // must match the initial request exactly
+            .continuation_token(token.clone())
+            .build();
+        let next = client.generate_content(&request, "gemini-2.5-flash").await?;
+    }
+}
+```
+
+---
+
+## Built-in tools (code execution, URL context)
+
+```rust
+use geologia::prelude::{CodeExecution, Tools, UrlContext};
+
+let tools = Tools {
+    code_execution: Some(CodeExecution {}),
+    url_context: Some(UrlContext {}),
+    ..Default::default()
+};
+
+let request = GenerateContentRequest::builder()
+    .contents(vec![...])
+    .tools(vec![tools])
+    .build();
+let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+// Grounding and URL context details are raw JSON (`serde_json::Value`) for now.
+println!("{:?}", response.candidates[0].url_context_metadata);
+```
+
+`file_search`, `google_maps`, `computer_use` and `mcp_servers` are also on `Tools` as raw
+`serde_json::Value` configs.
+
 ---
 
 ## Function calling
