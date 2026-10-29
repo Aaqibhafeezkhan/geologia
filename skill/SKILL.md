@@ -445,22 +445,46 @@ See `examples/context-caching.rs` for a runnable version.
 
 ## Text embeddings
 
-```rust
-use geologia::prelude::{GeminiClient, TextEmbeddingRequest, TextEmbeddingRequestContent};
+Embed a single input with `embed_content`, or embed multiple inputs in one round-trip with
+`batch_embed_contents` (which automatically sets `model` on each inner request):
 
-let request = TextEmbeddingRequest {
-    content: TextEmbeddingRequestContent {
-        parts: vec![/* Part with text */],
-    },
-    task_type: Some("RETRIEVAL_DOCUMENT".to_string()),
-    title: Some("My document title".to_string()),
+```rust
+use geologia::prelude::{
+    BatchEmbedContentsRequest, EmbedContentRequest, GeminiClient, TaskType,
 };
 
-let result = client
-    .text_embeddings(&request, "text-embedding-004")
+// Single embedding
+let query = EmbedContentRequest::builder()
+    .text("How does Rust manage memory?")
+    .task_type(TaskType::RetrievalQuery)
+    .output_dimensionality(256)
+    .build();
+
+let response = client
+    .embed_content(&query, "gemini-embedding-001")
     .await?;
-// result.embedding.values: Vec<f32>
+// response.embedding.values: Vec<f32>
+
+// Batch embeddings
+let batch = BatchEmbedContentsRequest::builder()
+    .add_request(
+        EmbedContentRequest::builder()
+            .text("Rust uses ownership and borrowing checked at compile time.")
+            .task_type(TaskType::RetrievalDocument)
+            .title("Rust Memory Model")
+            .output_dimensionality(256)
+            .build(),
+    )
+    .add_request(EmbedContentRequest::from_text("Another document to embed."))
+    .build();
+
+let batch_response = client
+    .batch_embed_contents(&batch, "gemini-embedding-001")
+    .await?;
+// batch_response.embeddings: Vec<ContentEmbedding>
 ```
+
+See `examples/embeddings.rs` for a runnable version.
 
 ---
 
@@ -502,4 +526,4 @@ errors (with status codes and messages from Google), and serialization failures.
 - `"gemini-3.8-flash"` — fast and cost-efficient
 - `"gemini-3.1-flash-lite"` — fastest and cheapest (used by the examples)
 - `"imagen-4.0-generate-001"` — image generation
-- `"text-embedding-004"` — text embeddings
+- `"gemini-embedding-001"` — text embeddings
