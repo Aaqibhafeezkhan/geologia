@@ -130,12 +130,23 @@ let request = GenerateContentRequest::builder()
 ## Generation config
 
 ```rust
-use geologia::prelude::GenerationConfig;
+use geologia::prelude::{
+    GenerationConfig, MediaResolution, Modality, ThinkingConfig, ThinkingLevel,
+};
 
 let config = GenerationConfig::builder()
-    .temperature(0.7)
+    .temperature(0.7_f32)
     .max_output_tokens(1024)
-    .top_p(0.9)
+    .top_p(0.9_f32)
+    .seed(42)
+    .response_modalities([Modality::Text])
+    .media_resolution(MediaResolution::Medium)
+    .thinking_config(
+        ThinkingConfig::builder()
+            .thinking_level(ThinkingLevel::Minimal)
+            .include_thoughts(false)
+            .build(),
+    )
     .build();
 
 let request = GenerateContentRequest::builder()
@@ -455,24 +466,23 @@ let result = client
 
 ## Structured JSON output
 
-Use `response_mime_type` and `response_schema` in `GenerationConfig` to enforce a JSON schema:
+Use `response_mime_type` and `response_json_schema` (or `response_schema`) in `GenerationConfig` to
+enforce a JSON Schema:
 
 ```rust
-use geologia::prelude::{GenerationConfig, ResponseSchema};
+use geologia::prelude::GenerationConfig;
 use serde_json::json;
 
-let schema = ResponseSchema {
-    r#type: "object".to_string(),
-    properties: Some(json!({
-        "name": { "type": "string" },
-        "age": { "type": "integer" }
-    })),
-    ..Default::default()
-};
-
 let config = GenerationConfig::builder()
-    .response_mime_type("application/json".to_string())
-    .response_schema(schema)
+    .response_mime_type("application/json")
+    .response_json_schema(json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "age": { "type": "integer" }
+        },
+        "required": ["name", "age"]
+    }))
     .build();
 ```
 

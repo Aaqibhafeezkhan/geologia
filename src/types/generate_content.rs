@@ -308,8 +308,8 @@ pub struct LatLng {
 ///
 /// Use [`GenerationConfig::builder`] for ergonomic construction.
 ///
-/// See <https://ai.google.dev/api/generate-content#generationconfig>.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+/// See <https://ai.google.dev/api/generate-content#v1beta.GenerationConfig>.
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -328,8 +328,57 @@ pub struct GenerationConfig {
     pub response_mime_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_schema: Option<Value>,
+    /// Output schema of the generated response as standard JSON Schema (alternative to
+    /// [`response_schema`](Self::response_schema)).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_json_schema: Option<Value>,
+    /// Output response format configuration (`ResponseFormatConfig`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<Value>,
+    /// Seed used in decoding for reproducibility when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i32>,
+    /// Penalty applied to the next token's logprobs if the token has already been seen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f32>,
+    /// Penalty applied to the next token's logprobs proportional to how often it has been seen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f32>,
+    /// If true, export the logprobs results in the response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_logprobs: Option<bool>,
+    /// Number of top logprobs to return at each decoding step (only valid when
+    /// [`response_logprobs`](Self::response_logprobs) is `Some(true)`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<i32>,
+    /// Enables enhanced civic answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_enhanced_civic_answers: Option<bool>,
+    /// Requested response modalities (supports [`Modality::Unspecified`], [`Modality::Text`],
+    /// [`Modality::Image`], and [`Modality::Audio`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_modalities: Option<Vec<Modality>>,
+    /// Media resolution for input media.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_resolution: Option<MediaResolution>,
+    /// Speech generation configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speech_config: Option<SpeechConfig>,
+    /// Configuration for thinking features.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_config: Option<ThinkingConfig>,
+    /// Image generation configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_config: Option<ImageConfig>,
+    /// Enables affective dialog so the model adapts to emotional tone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_affective_dialog: Option<bool>,
+    /// Audio transcription configuration (`AudioTranscriptionConfig`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_transcription_config: Option<Value>,
+    /// Translation configuration (`TranslationConfig`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translation_config: Option<Value>,
 }
 
 impl GenerationConfig {
@@ -340,7 +389,7 @@ impl GenerationConfig {
 }
 
 /// Builder for [`GenerationConfig`].
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct GenerationConfigBuilder {
     generation_config: GenerationConfig,
 }
@@ -392,8 +441,101 @@ impl GenerationConfigBuilder {
         self
     }
 
+    /// Sets the output JSON Schema (alternative to [`response_schema`](Self::response_schema)).
+    pub fn response_json_schema<T: Into<Value>>(mut self, response_json_schema: T) -> Self {
+        self.generation_config.response_json_schema = Some(response_json_schema.into());
+        self
+    }
+
+    /// Sets the response format configuration (`ResponseFormatConfig`).
+    pub fn response_format<T: Into<Value>>(mut self, response_format: T) -> Self {
+        self.generation_config.response_format = Some(response_format.into());
+        self
+    }
+
+    /// Sets the decoding seed.
+    pub fn seed<T: Into<i32>>(mut self, seed: T) -> Self {
+        self.generation_config.seed = Some(seed.into());
+        self
+    }
+
+    /// Sets the presence penalty applied to already-seen tokens.
+    pub fn presence_penalty(mut self, presence_penalty: f32) -> Self {
+        self.generation_config.presence_penalty = Some(presence_penalty);
+        self
+    }
+
+    /// Sets the frequency penalty applied proportionally to token occurrence count.
+    pub fn frequency_penalty(mut self, frequency_penalty: f32) -> Self {
+        self.generation_config.frequency_penalty = Some(frequency_penalty);
+        self
+    }
+
+    /// Sets whether logprobs are included in the response.
+    pub fn response_logprobs(mut self, response_logprobs: bool) -> Self {
+        self.generation_config.response_logprobs = Some(response_logprobs);
+        self
+    }
+
+    /// Sets the number of top logprobs to return at each decoding step.
+    pub fn logprobs<T: Into<i32>>(mut self, logprobs: T) -> Self {
+        self.generation_config.logprobs = Some(logprobs.into());
+        self
+    }
+
+    /// Sets whether enhanced civic answers are enabled.
+    pub fn enable_enhanced_civic_answers(mut self, enable_enhanced_civic_answers: bool) -> Self {
+        self.generation_config.enable_enhanced_civic_answers = Some(enable_enhanced_civic_answers);
+        self
+    }
+
+    /// Sets the requested response modalities.
+    pub fn response_modalities<T: Into<Vec<Modality>>>(mut self, response_modalities: T) -> Self {
+        self.generation_config.response_modalities = Some(response_modalities.into());
+        self
+    }
+
+    /// Sets the media resolution for input media.
+    pub fn media_resolution(mut self, media_resolution: MediaResolution) -> Self {
+        self.generation_config.media_resolution = Some(media_resolution);
+        self
+    }
+
+    /// Sets the speech generation configuration.
+    pub fn speech_config(mut self, speech_config: SpeechConfig) -> Self {
+        self.generation_config.speech_config = Some(speech_config);
+        self
+    }
+
     pub fn thinking_config(mut self, thinking_config: ThinkingConfig) -> Self {
         self.generation_config.thinking_config = Some(thinking_config);
+        self
+    }
+
+    /// Sets the image generation configuration.
+    pub fn image_config(mut self, image_config: ImageConfig) -> Self {
+        self.generation_config.image_config = Some(image_config);
+        self
+    }
+
+    /// Sets whether affective dialog is enabled.
+    pub fn enable_affective_dialog(mut self, enable_affective_dialog: bool) -> Self {
+        self.generation_config.enable_affective_dialog = Some(enable_affective_dialog);
+        self
+    }
+
+    /// Sets the audio transcription configuration (`AudioTranscriptionConfig`).
+    pub fn audio_transcription_config<T: Into<Value>>(
+        mut self,
+        audio_transcription_config: T,
+    ) -> Self {
+        self.generation_config.audio_transcription_config = Some(audio_transcription_config.into());
+        self
+    }
+
+    /// Sets the translation configuration (`TranslationConfig`).
+    pub fn translation_config<T: Into<Value>>(mut self, translation_config: T) -> Self {
+        self.generation_config.translation_config = Some(translation_config.into());
         self
     }
 
@@ -403,23 +545,119 @@ impl GenerationConfigBuilder {
     }
 }
 
+/// Media resolution for input media in a generation request.
+///
+/// See <https://ai.google.dev/api/generate-content#MediaResolution>.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MediaResolution {
+    #[serde(rename = "MEDIA_RESOLUTION_UNSPECIFIED")]
+    Unspecified,
+    #[serde(rename = "MEDIA_RESOLUTION_LOW")]
+    Low,
+    #[serde(rename = "MEDIA_RESOLUTION_MEDIUM")]
+    Medium,
+    #[serde(rename = "MEDIA_RESOLUTION_HIGH")]
+    High,
+}
+
+/// Speech generation configuration.
+///
+/// See <https://ai.google.dev/api/generate-content#SpeechConfig>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechConfig {
+    /// Configuration for single-voice output (`VoiceConfig`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice_config: Option<Value>,
+    /// Configuration for multi-speaker output (`MultiSpeakerVoiceConfig`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multi_speaker_voice_config: Option<Value>,
+    /// Language code (in BCP 47 format, e.g. `"en-US"`) for speech synthesis.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language_code: Option<String>,
+}
+
+/// Configuration for image generation outputs.
+///
+/// See <https://ai.google.dev/api/generate-content#ImageConfig>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageConfig {
+    /// Aspect ratio of generated images (e.g. `"1:1"`, `"16:9"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect_ratio: Option<String>,
+    /// Size of generated images (e.g. `"1K"`, `"2K"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<String>,
+}
+
 /// Configuration for the model's "thinking" (chain-of-thought) behavior.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+///
+/// Use [`ThinkingConfig::builder`] for ergonomic construction.
+///
+/// See <https://ai.google.dev/api/generate-content#ThinkingConfig>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
-    pub include_thoughts: bool,
+    /// Whether to include thoughts in the response.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_budget: Option<isize>,
+    pub include_thoughts: Option<bool>,
+    /// The number of thought tokens that the model should generate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<i32>,
+    /// The level of thinking effort the model should use.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
 }
 
+impl ThinkingConfig {
+    /// Returns a new [`ThinkingConfigBuilder`].
+    pub fn builder() -> ThinkingConfigBuilder {
+        ThinkingConfigBuilder::default()
+    }
+}
+
+/// Builder for [`ThinkingConfig`].
+#[derive(Clone, Debug, Default)]
+pub struct ThinkingConfigBuilder {
+    thinking_config: ThinkingConfig,
+}
+
+impl ThinkingConfigBuilder {
+    /// Sets whether thoughts are included in the response.
+    pub fn include_thoughts(mut self, include_thoughts: bool) -> Self {
+        self.thinking_config.include_thoughts = Some(include_thoughts);
+        self
+    }
+
+    /// Sets the number of thought tokens the model should generate.
+    pub fn thinking_budget<T: Into<i32>>(mut self, thinking_budget: T) -> Self {
+        self.thinking_config.thinking_budget = Some(thinking_budget.into());
+        self
+    }
+
+    /// Sets the [`ThinkingLevel`] for the model.
+    pub fn thinking_level(mut self, thinking_level: ThinkingLevel) -> Self {
+        self.thinking_config.thinking_level = Some(thinking_level);
+        self
+    }
+
+    /// Consumes the builder and returns the constructed [`ThinkingConfig`].
+    pub fn build(self) -> ThinkingConfig {
+        self.thinking_config
+    }
+}
+
 /// The level of thinking effort the model should use.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// See <https://ai.google.dev/api/generate-content#ThinkingLevel>.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ThinkingLevel {
     ThinkingLevelUnspecified,
+    Minimal,
     Low,
+    Medium,
     High,
 }
 
@@ -628,10 +866,11 @@ pub struct ModalityTokenCount {
     pub token_count: u32,
 }
 
-/// Content modality reported in [`ModalityTokenCount`].
+/// Content modality reported in [`ModalityTokenCount`] or requested in
+/// [`GenerationConfig::response_modalities`].
 ///
 /// See <https://ai.google.dev/api/generate-content#Modality>.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Modality {
     #[serde(rename = "MODALITY_UNSPECIFIED")]
     Unspecified,
@@ -847,9 +1086,225 @@ mod tests {
     use super::{
         Behavior, FunctionCallingConfig, FunctionCallingMode, FunctionResponse,
         FunctionResponseBlob, FunctionResponsePart, GenerateContentRequest,
-        GenerateContentResponse, GenerateContentResponseResult, HarmCategory, LatLng, ModelStage,
-        RetrievalConfig, Scheduling, ToolConfig,
+        GenerateContentResponse, GenerateContentResponseResult, GenerationConfig, HarmCategory,
+        ImageConfig, LatLng, MediaResolution, ModelStage, RetrievalConfig, Scheduling,
+        SpeechConfig, ThinkingConfig, ThinkingLevel, ToolConfig,
     };
+
+    #[test]
+    fn thinking_level_round_trips_api_strings() -> serde_json::Result<()> {
+        let cases = [
+            (
+                ThinkingLevel::ThinkingLevelUnspecified,
+                "THINKING_LEVEL_UNSPECIFIED",
+            ),
+            (ThinkingLevel::Minimal, "MINIMAL"),
+            (ThinkingLevel::Low, "LOW"),
+            (ThinkingLevel::Medium, "MEDIUM"),
+            (ThinkingLevel::High, "HIGH"),
+        ];
+
+        for (level, expected) in cases {
+            assert_eq!(serde_json::to_value(level)?, json!(expected));
+            assert_eq!(
+                serde_json::from_value::<ThinkingLevel>(json!(expected))?,
+                level
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn thinking_config_omits_unset_include_thoughts_and_deserializes_without_it()
+    -> serde_json::Result<()> {
+        assert_eq!(serde_json::to_value(ThinkingConfig::default())?, json!({}));
+
+        let without_include_thoughts = ThinkingConfig::builder()
+            .thinking_budget(256)
+            .thinking_level(ThinkingLevel::Minimal)
+            .build();
+        assert_eq!(
+            serde_json::to_value(&without_include_thoughts)?,
+            json!({
+                "thinkingBudget": 256,
+                "thinkingLevel": "MINIMAL"
+            })
+        );
+
+        let parsed: ThinkingConfig = serde_json::from_value(json!({ "thinkingLevel": "MEDIUM" }))?;
+        assert_eq!(
+            parsed,
+            ThinkingConfig {
+                include_thoughts: None,
+                thinking_budget: None,
+                thinking_level: Some(ThinkingLevel::Medium),
+            }
+        );
+
+        let empty_parsed: ThinkingConfig = serde_json::from_value(json!({}))?;
+        assert_eq!(empty_parsed, ThinkingConfig::default());
+
+        let full = ThinkingConfig::builder()
+            .include_thoughts(true)
+            .thinking_budget(1024)
+            .thinking_level(ThinkingLevel::High)
+            .build();
+        let full_json = serde_json::to_value(&full)?;
+        assert_eq!(
+            full_json,
+            json!({
+                "includeThoughts": true,
+                "thinkingBudget": 1024,
+                "thinkingLevel": "HIGH"
+            })
+        );
+        assert_eq!(serde_json::from_value::<ThinkingConfig>(full_json)?, full);
+        Ok(())
+    }
+
+    #[test]
+    fn media_resolution_round_trips_api_strings() -> serde_json::Result<()> {
+        let cases = [
+            (MediaResolution::Unspecified, "MEDIA_RESOLUTION_UNSPECIFIED"),
+            (MediaResolution::Low, "MEDIA_RESOLUTION_LOW"),
+            (MediaResolution::Medium, "MEDIA_RESOLUTION_MEDIUM"),
+            (MediaResolution::High, "MEDIA_RESOLUTION_HIGH"),
+        ];
+
+        for (resolution, expected) in cases {
+            assert_eq!(serde_json::to_value(resolution)?, json!(expected));
+            assert_eq!(
+                serde_json::from_value::<MediaResolution>(json!(expected))?,
+                resolution
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generation_config_serializes_seed_response_modalities_and_media_resolution()
+    -> serde_json::Result<()> {
+        let config = GenerationConfig::builder()
+            .seed(42)
+            .response_modalities(vec![Modality::Text, Modality::Image])
+            .media_resolution(MediaResolution::Medium)
+            .build();
+
+        let value = serde_json::to_value(&config)?;
+        assert_eq!(
+            value,
+            json!({
+                "seed": 42,
+                "responseModalities": ["TEXT", "IMAGE"],
+                "mediaResolution": "MEDIA_RESOLUTION_MEDIUM"
+            })
+        );
+        assert_eq!(serde_json::from_value::<GenerationConfig>(value)?, config);
+        Ok(())
+    }
+
+    #[test]
+    fn generation_config_omits_unset_fields_and_round_trips_all_new_fields()
+    -> serde_json::Result<()> {
+        assert_eq!(
+            serde_json::to_value(GenerationConfig::builder().build())?,
+            json!({})
+        );
+        assert_eq!(serde_json::to_value(SpeechConfig::default())?, json!({}));
+        assert_eq!(serde_json::to_value(ImageConfig::default())?, json!({}));
+
+        let config = GenerationConfig::builder()
+            .max_output_tokens(512)
+            .temperature(0.5_f32)
+            .top_p(0.875_f32)
+            .top_k(40)
+            .stop_sequences(vec!["END".to_string()])
+            .candidate_count(1_u32)
+            .response_mime_type("application/json")
+            .response_schema(json!({ "type": "OBJECT" }))
+            .response_json_schema(json!({
+                "type": "object",
+                "properties": { "answer": { "type": "string" } }
+            }))
+            .response_format(json!({ "type": "json_object" }))
+            .seed(12345)
+            .presence_penalty(0.25)
+            .frequency_penalty(-0.5)
+            .response_logprobs(true)
+            .logprobs(5)
+            .enable_enhanced_civic_answers(false)
+            .response_modalities([Modality::Text, Modality::Audio])
+            .media_resolution(MediaResolution::High)
+            .speech_config(SpeechConfig {
+                voice_config: Some(json!({
+                    "prebuiltVoiceConfig": { "voiceName": "Kore" }
+                })),
+                multi_speaker_voice_config: Some(json!({ "speakerVoiceConfigs": [] })),
+                language_code: Some("en-US".to_string()),
+            })
+            .thinking_config(
+                ThinkingConfig::builder()
+                    .include_thoughts(false)
+                    .thinking_level(ThinkingLevel::Low)
+                    .build(),
+            )
+            .image_config(ImageConfig {
+                aspect_ratio: Some("16:9".to_string()),
+                image_size: Some("2K".to_string()),
+            })
+            .enable_affective_dialog(true)
+            .audio_transcription_config(json!({}))
+            .translation_config(json!({ "targetLanguage": "pt-BR" }))
+            .build();
+
+        let value = serde_json::to_value(&config)?;
+        assert_eq!(
+            value,
+            json!({
+                "maxOutputTokens": 512,
+                "temperature": 0.5,
+                "topP": 0.875,
+                "topK": 40,
+                "stopSequences": ["END"],
+                "candidateCount": 1,
+                "responseMimeType": "application/json",
+                "responseSchema": { "type": "OBJECT" },
+                "responseJsonSchema": {
+                    "type": "object",
+                    "properties": { "answer": { "type": "string" } }
+                },
+                "responseFormat": { "type": "json_object" },
+                "seed": 12345,
+                "presencePenalty": 0.25,
+                "frequencyPenalty": -0.5,
+                "responseLogprobs": true,
+                "logprobs": 5,
+                "enableEnhancedCivicAnswers": false,
+                "responseModalities": ["TEXT", "AUDIO"],
+                "mediaResolution": "MEDIA_RESOLUTION_HIGH",
+                "speechConfig": {
+                    "voiceConfig": {
+                        "prebuiltVoiceConfig": { "voiceName": "Kore" }
+                    },
+                    "multiSpeakerVoiceConfig": { "speakerVoiceConfigs": [] },
+                    "languageCode": "en-US"
+                },
+                "thinkingConfig": {
+                    "includeThoughts": false,
+                    "thinkingLevel": "LOW"
+                },
+                "imageConfig": {
+                    "aspectRatio": "16:9",
+                    "imageSize": "2K"
+                },
+                "enableAffectiveDialog": true,
+                "audioTranscriptionConfig": {},
+                "translationConfig": { "targetLanguage": "pt-BR" }
+            })
+        );
+        assert_eq!(serde_json::from_value::<GenerationConfig>(value)?, config);
+        Ok(())
+    }
 
     #[test]
     fn parses_response_with_model_status_and_candidate_metadata() -> serde_json::Result<()> {
