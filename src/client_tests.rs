@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::network::event_source::ServerSentEvent;
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -59,8 +59,12 @@ fn all_endpoint_urls_build_from_configured_base_url() {
         "https://custom.endpoint.example/v1/models/gemini-2.0-flash:generateContent"
     );
     assert_eq!(
-        client.endpoint_url("models/text-embedding-004:predict"),
-        "https://custom.endpoint.example/v1/models/text-embedding-004:predict"
+        client.endpoint_url("models/gemini-embedding-001:embedContent"),
+        "https://custom.endpoint.example/v1/models/gemini-embedding-001:embedContent"
+    );
+    assert_eq!(
+        client.endpoint_url("models/gemini-embedding-001:batchEmbedContents"),
+        "https://custom.endpoint.example/v1/models/gemini-embedding-001:batchEmbedContents"
     );
     assert_eq!(
         client.endpoint_url("models/gemini-2.0-flash:countTokens"),
@@ -224,6 +228,127 @@ async fn count_tokens_against_mock_server_checks_path_and_api_key() -> Result<()
 
     let response = client.count_tokens(&request, "gemini-2.0-flash").await?;
     assert_eq!(response.total_tokens, 25);
+    Ok(())
+}
+
+#[tokio::test]
+async fn embed_content_against_mock_server_checks_path_body_and_response() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/models/gemini-embedding-001:embedContent"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(body_json(serde_json::json!({
+            "content": {
+                "parts": [{"text": "Embed this query"}]
+            },
+            "taskType": "RETRIEVAL_QUERY",
+            "outputDimensionality": 3
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "embedding": {
+                "values": [0.1, 0.2, 0.3]
+            },
+            "usageMetadata": {
+                "promptTokenCount": 3
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let request = EmbedContentRequest::builder()
+        .text("Embed this query")
+        .task_type(TaskType::RetrievalQuery)
+        .output_dimensionality(3)
+        .build();
+
+    let response = client
+        .embed_content(&request, "gemini-embedding-001")
+        .await?;
+    assert_eq!(response.embedding.values, vec![0.1, 0.2, 0.3]);
+    assert_eq!(
+        response
+            .usage_metadata
+            .ok_or("expected usage_metadata")?
+            .prompt_token_count,
+        Some(3)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_embed_contents_against_mock_server_sets_inner_models_and_parses_response()
+-> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/models/gemini-embedding-001:batchEmbedContents"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(body_json(serde_json::json!({
+            "requests": [
+                {
+                    "model": "models/gemini-embedding-001",
+                    "content": {
+                        "parts": [{"text": "First document"}]
+                    },
+                    "taskType": "RETRIEVAL_DOCUMENT",
+                    "title": "Doc 1"
+                },
+                {
+                    "model": "models/gemini-embedding-001",
+                    "content": {
+                        "parts": [{"text": "Second document"}]
+                    }
+                }
+            ]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "embeddings": [
+                {"values": [0.5, -0.5]},
+                {"values": [0.25, 0.75]}
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 5
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let batch = BatchEmbedContentsRequest::builder()
+        .add_request(
+            EmbedContentRequest::builder()
+                .text("First document")
+                .task_type(TaskType::RetrievalDocument)
+                .title("Doc 1")
+                .build(),
+        )
+        .add_request(EmbedContentRequest::from_text("Second document"))
+        .build();
+
+    // Passing `models/gemini-embedding-001` also exercises prefix normalization.
+    let response = client
+        .batch_embed_contents(&batch, "models/gemini-embedding-001")
+        .await?;
+    assert_eq!(response.embeddings.len(), 2);
+    assert_eq!(response.embeddings[0].values, vec![0.5, -0.5]);
+    assert_eq!(response.embeddings[1].values, vec![0.25, 0.75]);
+    assert_eq!(
+        response
+            .usage_metadata
+            .ok_or("expected usage_metadata")?
+            .prompt_token_count,
+        Some(5)
+    );
     Ok(())
 }
 

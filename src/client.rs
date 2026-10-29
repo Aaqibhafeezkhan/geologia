@@ -155,27 +155,64 @@ impl GeminiClient {
         }
     }
 
-    /// Generates text embeddings for the given input.
-    pub async fn text_embeddings(
+    /// Generates an embedding vector for the given content.
+    ///
+    /// See <https://ai.google.dev/api/embeddings#method:-models.embedcontent>.
+    pub async fn embed_content(
         &self,
-        request: &TextEmbeddingRequest,
+        request: &EmbedContentRequest,
         model: &str,
-    ) -> GeminiResult<TextEmbeddingResponseOk> {
-        let endpoint_url = self.endpoint_url(&format!("models/{model}:predict"));
+    ) -> GeminiResult<EmbedContentResponse> {
+        let model_id = model.strip_prefix("models/").unwrap_or(model);
+        let endpoint_url = self.endpoint_url(&format!("models/{model_id}:embedContent"));
         let resp = self
             .client
             .post(&endpoint_url)
             .header("x-goog-api-key", &self.api_key)
-            .json(&request)
+            .json(request)
             .send()
             .await?;
         let resp = Self::error_for_status(resp).await?;
 
         let txt_json = resp.text().await?;
-        tracing::debug!("text_embeddings response: {:?}", txt_json);
+        tracing::debug!("embed_content response: {:?}", txt_json);
 
-        match serde_json::from_str::<TextEmbeddingResponse>(&txt_json) {
-            Ok(response) => Ok(response.into_result()?),
+        match serde_json::from_str::<EmbedContentResponse>(&txt_json) {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Generates multiple embedding vectors in a single batch request.
+    ///
+    /// Sets `model` (as `models/{model}`) on each inner [`EmbedContentRequest`] in the batch
+    /// as required by the API.
+    ///
+    /// See <https://ai.google.dev/api/embeddings#method:-models.batchembedcontents>.
+    pub async fn batch_embed_contents(
+        &self,
+        request: &BatchEmbedContentsRequest,
+        model: &str,
+    ) -> GeminiResult<BatchEmbedContentsResponse> {
+        let model_id = model.strip_prefix("models/").unwrap_or(model);
+        let endpoint_url = self.endpoint_url(&format!("models/{model_id}:batchEmbedContents"));
+        let resp = self
+            .client
+            .post(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&request.with_model(model_id))
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("batch_embed_contents response: {:?}", txt_json);
+
+        match serde_json::from_str::<BatchEmbedContentsResponse>(&txt_json) {
+            Ok(response) => Ok(response),
             Err(e) => {
                 error!(response = txt_json, error = ?e, "Failed to parse response");
                 Err(e.into())

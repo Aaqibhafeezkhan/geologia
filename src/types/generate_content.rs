@@ -859,7 +859,7 @@ pub struct UsageMetadata {
 /// A breakdown of tokens by [`Modality`].
 ///
 /// See <https://ai.google.dev/api/generate-content#ModalityTokenCount>.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModalityTokenCount {
     pub modality: Modality,
