@@ -15,7 +15,8 @@ use super::{Content, ModalityTokenCount};
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TaskType {
     /// Unset value, which defaults to one of the other enum values.
-    TaskTypeUnspecified,
+    #[serde(rename = "TASK_TYPE_UNSPECIFIED")]
+    Unspecified,
     /// Specifies the given text is a query in a search/retrieval setting.
     RetrievalQuery,
     /// Specifies the given text is a document from the corpus being searched.
@@ -313,7 +314,7 @@ mod tests {
     #[test]
     fn task_type_round_trips_all_api_strings() -> serde_json::Result<()> {
         let cases = [
-            (TaskType::TaskTypeUnspecified, "TASK_TYPE_UNSPECIFIED"),
+            (TaskType::Unspecified, "TASK_TYPE_UNSPECIFIED"),
             (TaskType::RetrievalQuery, "RETRIEVAL_QUERY"),
             (TaskType::RetrievalDocument, "RETRIEVAL_DOCUMENT"),
             (TaskType::SemanticSimilarity, "SEMANTIC_SIMILARITY"),
