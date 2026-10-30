@@ -1006,7 +1006,7 @@ pub enum Behavior {
 }
 
 /// See <https://ai.google.dev/api/caching#FunctionResponse>.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1097,7 +1097,7 @@ impl FunctionResponseFileData {
 }
 
 /// See <https://ai.google.dev/api/caching#Scheduling>.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Scheduling {
     SchedulingUnspecified,
@@ -1610,6 +1610,8 @@ mod tests {
             thought_signature: None,
             part_metadata: None,
             media_resolution: None,
+            video_metadata: None,
+            speech_metadata: None,
             data: PartData::FunctionResponse(response),
         }
     }

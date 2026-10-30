@@ -299,6 +299,8 @@ if let Some(candidate) = response.candidates.last()
             }),
             media_resolution: None,
             part_metadata: None,
+            video_metadata: None,
+            speech_metadata: None,
             thought: None,
             thought_signature: part.thought_signature.clone(),
         }]),
