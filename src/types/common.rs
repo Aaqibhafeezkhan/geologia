@@ -168,6 +168,23 @@ pub struct SpeechMetadata {
     pub style: Option<String>,
 }
 
+/// Information about a single recognized word within an [`AudioTranscription`].
+///
+/// See <https://ai.google.dev/api/caching#WordInfo>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WordInfo {
+    /// Transcript of the word.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word: Option<String>,
+    /// Optional start offset in time of the word relative to the start of the audio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_offset: Option<String>,
+    /// Optional end offset in time of the word relative to the start of the audio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_offset: Option<String>,
+}
+
 /// Transcription of an audio segment returned by the model.
 ///
 /// See <https://ai.google.dev/api/caching#AudioTranscription>.
@@ -182,7 +199,7 @@ pub struct AudioTranscription {
     pub speaker_label: Option<String>,
     /// Optional word-level transcription and timing metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub words: Option<Vec<Value>>,
+    pub words: Option<Vec<WordInfo>>,
 }
 
 /// A server-side tool call predicted by the model.
@@ -295,7 +312,7 @@ mod test {
 
     use crate::types::{
         AudioTranscription, Content, Part, PartData, Role, SpeechMetadata, ToolCall, ToolResponse,
-        VideoMetadata,
+        VideoMetadata, WordInfo,
     };
 
     fn part(data: PartData) -> Part {
@@ -574,8 +591,16 @@ mod test {
             text: Some("Hello world".to_string()),
             speaker_label: Some("spk_1".to_string()),
             words: Some(vec![
-                json!({ "word": "Hello", "startOffset": "0.100s", "endOffset": "0.400s" }),
-                json!({ "word": "world", "startOffset": "0.500s", "endOffset": "0.900s" }),
+                WordInfo {
+                    word: Some("Hello".to_string()),
+                    start_offset: Some("0.100s".to_string()),
+                    end_offset: Some("0.400s".to_string()),
+                },
+                WordInfo {
+                    word: Some("world".to_string()),
+                    start_offset: Some("0.500s".to_string()),
+                    end_offset: Some("0.900s".to_string()),
+                },
             ]),
         }));
 
@@ -601,6 +626,7 @@ mod test {
             serde_json::to_value(AudioTranscription::default())?,
             json!({})
         );
+        assert_eq!(serde_json::to_value(WordInfo::default())?, json!({}));
 
         let media_processing_part = part(PartData::MediaProcessing(json!({
             "mode": "AGENTIC"
