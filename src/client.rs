@@ -565,6 +565,12 @@ impl GeminiClient {
     /// custom resource ID (`files/{id}`), use
     /// [`upload_file_with_metadata`](Self::upload_file_with_metadata).
     ///
+    /// # Buffering
+    ///
+    /// `data` is copied into an in-memory request body and sent in a single `upload, finalize`
+    /// HTTP request (without multi-chunk streaming or resume retries). Callers should ensure the
+    /// payload fits comfortably in memory.
+    ///
     /// # Asynchronous processing
     ///
     /// Uploaded files (especially video, audio, and large documents) are processed asynchronously
@@ -612,8 +618,13 @@ impl GeminiClient {
     /// Uploads raw bytes to the Gemini Files API (`POST /upload/v1beta/files`) with explicit
     /// [`File`] metadata (such as a custom [`File::name`] and/or [`File::display_name`]).
     ///
-    /// If `file.name` is set without the `"files/"` prefix (e.g. `"my-doc-123"`), `"files/"` is
-    /// prepended automatically.
+    /// Only the writable create-time fields ([`File::name`] and [`File::display_name`]) are
+    /// forwarded in the initiation request; output-only fields on `file` are ignored. If
+    /// `file.name` is set without the `"files/"` prefix (e.g. `"my-doc-123"`), `"files/"` is
+    /// prepended automatically. An empty `file.name` (`""`) is treated as unset.
+    ///
+    /// `data` is copied into an in-memory request body and sent in a single `upload, finalize`
+    /// HTTP request.
     ///
     /// Uploaded files are processed asynchronously (`Processing` -> `Active` or `Failed`).
     /// Callers **must** wait until [`File::state`] is `Some(`[`FileState::Active`]`)` (by polling
@@ -627,13 +638,20 @@ impl GeminiClient {
         mime_type: &str,
         file: &File,
     ) -> GeminiResult<File> {
-        let mut normalized = file.clone();
-        if let Some(ref name) = normalized.name
-            && !name.is_empty()
-            && !name.starts_with("files/")
-        {
-            normalized.name = Some(format!("files/{name}"));
-        }
+        let normalized_name = file.name.as_deref().and_then(|name| {
+            if name.is_empty() {
+                None
+            } else if name.starts_with("files/") {
+                Some(name.to_string())
+            } else {
+                Some(format!("files/{name}"))
+            }
+        });
+        let normalized = File {
+            name: normalized_name,
+            display_name: file.display_name.clone(),
+            ..Default::default()
+        };
         self.upload_file_internal(data, mime_type, Some(normalized))
             .await
     }
@@ -662,7 +680,6 @@ impl GeminiClient {
             .await?;
         let start_resp = Self::error_for_status(start_resp).await?;
 
-        let start_status = start_resp.status();
         let upload_url = start_resp
             .headers()
             .get("x-goog-upload-url")
@@ -683,10 +700,7 @@ impl GeminiClient {
                         "Resumable upload initiation response missing x-goog-upload-url header: {body}"
                     )
                 };
-                return Err(GeminiError::ApiError {
-                    status: start_status,
-                    body: detail,
-                });
+                return Err(GeminiError::UnexpectedResponse { message: detail });
             }
         };
 

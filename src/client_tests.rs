@@ -1322,8 +1322,8 @@ async fn upload_file_without_display_name_sends_empty_metadata_object() -> Resul
 }
 
 #[tokio::test]
-async fn upload_file_with_metadata_normalizes_unprefixed_name_and_uses_versioned_upload_path()
--> Result<()> {
+async fn upload_file_with_metadata_normalizes_unprefixed_and_preserves_prefixed_name() -> Result<()>
+{
     let mock_server = MockServer::start().await;
     let payload: &[u8] = b"# Markdown Spec";
     let session_url = format!(
@@ -1346,7 +1346,7 @@ async fn upload_file_with_metadata_normalizes_unprefixed_name_and_uses_versioned
         .respond_with(
             ResponseTemplate::new(200).insert_header("x-goog-upload-url", session_url.as_str()),
         )
-        .expect(1)
+        .expect(2)
         .mount(&mock_server)
         .await;
 
@@ -1364,7 +1364,7 @@ async fn upload_file_with_metadata_normalizes_unprefixed_name_and_uses_versioned
                 "state": "ACTIVE"
             }
         })))
-        .expect(1)
+        .expect(2)
         .mount(&mock_server)
         .await;
 
@@ -1372,22 +1372,111 @@ async fn upload_file_with_metadata_normalizes_unprefixed_name_and_uses_versioned
         .base_url(format!("{}/v1beta", mock_server.uri()))
         .build();
 
-    let metadata = File::builder()
+    let unprefixed = File::builder()
         .name("custom-spec-id")
         .display_name("Spec.md")
         .build();
-    let file = client
-        .upload_file_with_metadata(payload, "text/markdown", &metadata)
+    let file_from_unprefixed = client
+        .upload_file_with_metadata(payload, "text/markdown", &unprefixed)
         .await?;
 
-    assert_eq!(file.name.as_deref(), Some("files/custom-spec-id"));
-    assert_eq!(file.display_name.as_deref(), Some("Spec.md"));
-    assert_eq!(file.state, Some(FileState::Active));
+    let already_prefixed = File::builder()
+        .name("files/custom-spec-id")
+        .display_name("Spec.md")
+        .build();
+    let file_from_prefixed = client
+        .upload_file_with_metadata(payload, "text/markdown", &already_prefixed)
+        .await?;
+
+    assert_eq!(file_from_unprefixed, file_from_prefixed);
+    assert_eq!(
+        file_from_unprefixed.name.as_deref(),
+        Some("files/custom-spec-id")
+    );
+    assert_eq!(
+        file_from_unprefixed.display_name.as_deref(),
+        Some("Spec.md")
+    );
+    assert_eq!(file_from_unprefixed.state, Some(FileState::Active));
     Ok(())
 }
 
 #[tokio::test]
-async fn upload_file_returns_api_error_when_upload_url_header_is_missing() -> Result<()> {
+async fn upload_file_with_metadata_ignores_empty_name_and_strips_output_only_fields() -> Result<()>
+{
+    let mock_server = MockServer::start().await;
+    let payload: &[u8] = b"video-bytes";
+    let session_url = format!("{}/upload-session/stripped", mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/upload/files"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(header("x-goog-upload-protocol", "resumable"))
+        .and(header("x-goog-upload-command", "start"))
+        .and(body_json(serde_json::json!({
+            "file": {
+                "displayName": "Reuploaded Clip.mp4"
+            }
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-goog-upload-url", session_url.as_str()),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/upload-session/stripped"))
+        .and(header("x-goog-upload-offset", "0"))
+        .and(headers("x-goog-upload-command", vec!["upload", "finalize"]))
+        .and(body_bytes(payload.to_vec()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "file": {
+                "name": "files/new-server-id",
+                "displayName": "Reuploaded Clip.mp4",
+                "mimeType": "video/mp4",
+                "state": "PROCESSING"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let fetched_like_file = File::builder()
+        .name("")
+        .display_name("Reuploaded Clip.mp4")
+        .mime_type("video/mp4")
+        .size_bytes(999_999)
+        .create_time("2026-10-30T00:00:00Z")
+        .update_time("2026-10-30T00:01:00Z")
+        .expiration_time("2026-11-01T00:00:00Z")
+        .sha256_hash("deadbeef")
+        .uri("https://generativelanguage.googleapis.com/v1beta/files/old-id")
+        .download_uri("https://generativelanguage.googleapis.com/v1beta/files/old-id:download")
+        .state(FileState::Active)
+        .source(FileSource::Uploaded)
+        .video_metadata(VideoFileMetadata {
+            video_duration: Some("12s".to_string()),
+        })
+        .build();
+
+    let uploaded = client
+        .upload_file_with_metadata(payload, "video/mp4", &fetched_like_file)
+        .await?;
+    assert_eq!(uploaded.name.as_deref(), Some("files/new-server-id"));
+    assert_eq!(
+        uploaded.display_name.as_deref(),
+        Some("Reuploaded Clip.mp4")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_file_returns_unexpected_response_when_upload_url_header_is_missing() -> Result<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -1407,13 +1496,13 @@ async fn upload_file_returns_api_error_when_upload_url_header_is_missing() -> Re
         .err()
         .ok_or("expected missing upload header error")?;
 
-    match err {
-        GeminiError::ApiError { status, body } => {
-            assert_eq!(status, reqwest::StatusCode::OK);
-            assert!(body.contains("x-goog-upload-url"));
+    match &err {
+        GeminiError::UnexpectedResponse { message } => {
+            assert!(message.contains("x-goog-upload-url"));
         }
-        other => panic!("expected ApiError, got {other:?}"),
+        other => panic!("expected UnexpectedResponse, got {other:?}"),
     }
+    assert!(err.to_string().starts_with("Unexpected API response:"));
     Ok(())
 }
 

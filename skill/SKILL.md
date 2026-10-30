@@ -449,9 +449,11 @@ See `examples/context-caching.rs` for a runnable version.
 
 ## Uploading and referencing files (Files API)
 
-Upload media or documents up to 2 GB via the resumable Files API (`upload_file` or
+Upload media or documents via the resumable Files API (`upload_file` or
 `upload_file_with_metadata`) and reuse their URI across `generate_content` requests without
-re-sending raw bytes inline.
+re-sending raw bytes inline. Note that `upload_file` and `upload_file_with_metadata` copy the
+input `&[u8]` slice into an in-memory request body and send it in a single `upload, finalize`
+request, so the payload must fit comfortably in memory.
 
 Uploaded files (especially video, audio, and large PDFs) are processed asynchronously
 (`FileState::Processing` -> `FileState::Active`, or `FileState::Failed`). Always wait until

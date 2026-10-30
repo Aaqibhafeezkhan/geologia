@@ -31,6 +31,13 @@ pub enum Error {
         /// The raw response body.
         body: String,
     },
+    /// A 2xx response from the API violated an expected protocol contract
+    /// (for example, a resumable upload initiation response missing the
+    /// `x-goog-upload-url` header).
+    UnexpectedResponse {
+        /// Description of the protocol or response invariant violation.
+        message: String,
+    },
     /// An error occurred while reading or decoding the SSE event stream.
     EventSourceError(LinesCodecError),
 }
@@ -47,6 +54,9 @@ impl Display for Error {
             Error::ApiError { status, body } => {
                 write!(f, "HTTP error {status}: {body}")
             }
+            Error::UnexpectedResponse { message } => {
+                write!(f, "Unexpected API response: {message}")
+            }
             Error::EventSourceError(e) => {
                 write!(f, "EventSource Error: {e}")
             }
@@ -61,7 +71,7 @@ impl std::error::Error for Error {
             Error::HttpClient(e) => Some(e),
             Error::Serde(e) => Some(e),
             Error::VertexError(e) => Some(e),
-            Error::ApiError { .. } => None,
+            Error::ApiError { .. } | Error::UnexpectedResponse { .. } => None,
             Error::EventSourceError(e) => Some(e),
         }
     }
@@ -128,5 +138,18 @@ mod tests {
 
         let other_err = Error::EventSourceError(LinesCodecError::MaxLineLengthExceeded);
         assert_eq!(other_err.retry_delay(), None);
+    }
+
+    #[test]
+    fn unexpected_response_formats_message_and_has_no_source() {
+        let err = Error::UnexpectedResponse {
+            message: "missing x-goog-upload-url header".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "Unexpected API response: missing x-goog-upload-url header"
+        );
+        assert!(std::error::Error::source(&err).is_none());
+        assert_eq!(err.retry_delay(), None);
     }
 }
