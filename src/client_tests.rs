@@ -66,6 +66,14 @@ fn resource_url_handles_prefixed_and_unprefixed_names() {
         client.batch_resource_url("batch-123"),
         "https://generativelanguage.googleapis.com/v1beta/batches/batch-123"
     );
+    assert_eq!(
+        client.file_search_store_resource_url("fileSearchStores/my-store-123"),
+        "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/my-store-123"
+    );
+    assert_eq!(
+        client.file_search_store_resource_url("my-store-123"),
+        "https://generativelanguage.googleapis.com/v1beta/fileSearchStores/my-store-123"
+    );
 }
 
 #[test]
@@ -137,6 +145,18 @@ fn all_endpoint_urls_build_from_configured_base_url() {
     assert_eq!(
         client.upload_endpoint_url("files"),
         "https://custom.endpoint.example/upload/v1/files"
+    );
+    assert_eq!(
+        client.endpoint_url("fileSearchStores"),
+        "https://custom.endpoint.example/v1/fileSearchStores"
+    );
+    assert_eq!(
+        client.file_search_store_resource_url("fileSearchStores/my-store-123"),
+        "https://custom.endpoint.example/v1/fileSearchStores/my-store-123"
+    );
+    assert_eq!(
+        client.file_search_store_resource_url("my-store-123"),
+        "https://custom.endpoint.example/v1/fileSearchStores/my-store-123"
     );
 }
 
@@ -2165,5 +2185,527 @@ async fn batch_end_to_end_create_poll_cancel_delete_lifecycle() -> Result<()> {
 
     client.cancel_batch(batch_name).await?;
     client.delete_batch(batch_name).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_file_search_store_against_mock_server_normalizes_model_prefix() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/fileSearchStores"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(body_json(serde_json::json!({
+            "displayName": "My Store",
+            "embeddingModel": "models/gemini-embedding-2"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "fileSearchStores/my-store-123",
+            "displayName": "My Store",
+            "embeddingModel": "models/gemini-embedding-2",
+            "activeDocumentsCount": "0",
+            "createTime": "2026-03-30T10:00:00Z"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let store_req = FileSearchStore::builder()
+        .display_name("My Store")
+        .embedding_model("gemini-embedding-2") // should be normalized to models/gemini-embedding-2
+        .build();
+
+    let created = client.create_file_search_store(&store_req).await?;
+    assert_eq!(
+        created.name.as_deref(),
+        Some("fileSearchStores/my-store-123")
+    );
+    assert_eq!(created.display_name.as_deref(), Some("My Store"));
+    assert_eq!(
+        created.embedding_model.as_deref(),
+        Some("models/gemini-embedding-2")
+    );
+    assert_eq!(created.active_documents_count, Some(0));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_file_search_store_against_mock_server_handles_prefixed_and_unprefixed_name()
+-> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/fileSearchStores/store-xyz"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "fileSearchStores/store-xyz",
+            "displayName": "Found Store",
+            "activeDocumentsCount": "10",
+            "sizeBytes": "4096"
+        })))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let store1 = client.get_file_search_store("store-xyz").await?;
+    let store2 = client
+        .get_file_search_store("fileSearchStores/store-xyz")
+        .await?;
+    assert_eq!(store1, store2);
+    assert_eq!(store1.name.as_deref(), Some("fileSearchStores/store-xyz"));
+    assert_eq!(store1.display_name.as_deref(), Some("Found Store"));
+    assert_eq!(store1.active_documents_count, Some(10));
+    assert_eq!(store1.size_bytes, Some(4096));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_file_search_store_maps_not_found_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/fileSearchStores/missing-store"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "error": {
+                "code": 404,
+                "message": "FileSearchStore missing-store not found",
+                "status": "NOT_FOUND"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let err = client
+        .get_file_search_store("missing-store")
+        .await
+        .err()
+        .ok_or("expected 404 error")?;
+
+    match err {
+        GeminiError::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 404);
+            assert_eq!(vertex_err.status, "NOT_FOUND");
+        }
+        other => panic!("expected VertexError, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_file_search_stores_against_mock_server_without_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/fileSearchStores"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "fileSearchStores": [
+                {
+                    "name": "fileSearchStores/store-1",
+                    "displayName": "First Store"
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let response = client.list_file_search_stores(None, None).await?;
+    assert_eq!(response.file_search_stores.len(), 1);
+    assert_eq!(
+        response.file_search_stores[0].name.as_deref(),
+        Some("fileSearchStores/store-1")
+    );
+    assert_eq!(response.next_page_token, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_file_search_stores_against_mock_server_with_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/fileSearchStores"))
+        .and(query_param("pageSize", "10"))
+        .and(query_param("pageToken", "next-tok=="))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "fileSearchStores": [
+                {
+                    "name": "fileSearchStores/store-2",
+                    "displayName": "Second Store"
+                }
+            ],
+            "nextPageToken": "page-2-tok=="
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let response = client
+        .list_file_search_stores(Some(10), Some("next-tok=="))
+        .await?;
+    assert_eq!(response.file_search_stores.len(), 1);
+    assert_eq!(
+        response.file_search_stores[0].name.as_deref(),
+        Some("fileSearchStores/store-2")
+    );
+    assert_eq!(response.next_page_token.as_deref(), Some("page-2-tok=="));
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_file_search_store_against_mock_server_handles_prefixed_and_unprefixed_name()
+-> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/fileSearchStores/del-store-1"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    client
+        .delete_file_search_store("del-store-1", false)
+        .await?;
+    client
+        .delete_file_search_store("fileSearchStores/del-store-1", false)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_file_search_store_against_mock_server_with_force_true() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/fileSearchStores/force-del-store"))
+        .and(query_param("force", "true"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    client
+        .delete_file_search_store("force-del-store", true)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_file_search_store_maps_structured_gemini_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/fileSearchStores/in-use-store"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {
+                "code": 400,
+                "message": "FileSearchStore is not empty. Set force=true to delete.",
+                "status": "FAILED_PRECONDITION"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let err = client
+        .delete_file_search_store("in-use-store", false)
+        .await
+        .err()
+        .ok_or("expected 400 error")?;
+
+    match err {
+        GeminiError::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 400);
+            assert_eq!(vertex_err.status, "FAILED_PRECONDITION");
+        }
+        other => panic!("expected VertexError, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_to_file_search_store_executes_two_step_resumable_protocol() -> Result<()> {
+    let mock_server = MockServer::start().await;
+    let payload: &[u8] = b"Project Geologia Field Notes: Nepheline syenite formations.";
+    let session_url = format!("{}/upload-session/store-doc-1", mock_server.uri());
+
+    // Step 1: Start resumable upload against `/upload/fileSearchStores/my-store:uploadToFileSearchStore`
+    Mock::given(method("POST"))
+        .and(path(
+            "/upload/fileSearchStores/my-store:uploadToFileSearchStore",
+        ))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(header("x-goog-upload-protocol", "resumable"))
+        .and(header("x-goog-upload-command", "start"))
+        .and(header(
+            "x-goog-upload-header-content-length",
+            payload.len().to_string().as_str(),
+        ))
+        .and(header("x-goog-upload-header-content-type", "text/plain"))
+        .and(body_json(serde_json::json!({
+            "displayName": "notes.txt",
+            "mimeType": "text/plain"
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-goog-upload-url", session_url.as_str()),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Step 2: Upload raw bytes and finalize
+    Mock::given(method("POST"))
+        .and(path("/upload-session/store-doc-1"))
+        .and(header("content-length", payload.len().to_string().as_str()))
+        .and(header("x-goog-upload-offset", "0"))
+        .and(headers("x-goog-upload-command", vec!["upload", "finalize"]))
+        .and(body_bytes(payload.to_vec()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "fileSearchStores/my-store/operations/upload-op-1",
+            "done": false
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let op = client
+        .upload_to_file_search_store("my-store", payload, Some("text/plain"), Some("notes.txt"))
+        .await?;
+
+    assert_eq!(
+        op.name.as_deref(),
+        Some("fileSearchStores/my-store/operations/upload-op-1")
+    );
+    assert!(!op.is_done());
+    assert!(op.document().is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_to_file_search_store_with_request_supports_custom_config() -> Result<()> {
+    let mock_server = MockServer::start().await;
+    let payload: &[u8] = b"Custom chunking payload";
+    let session_url = format!("{}/upload-session/custom-1", mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path(
+            "/upload/v1beta/fileSearchStores/store-99:uploadToFileSearchStore",
+        ))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(header("x-goog-upload-protocol", "resumable"))
+        .and(header("x-goog-upload-command", "start"))
+        .and(body_json(serde_json::json!({
+            "displayName": "custom.txt",
+            "mimeType": "text/plain",
+            "customMetadata": [{ "key": "author", "stringValue": "Alice" }],
+            "chunkingConfig": {
+                "whiteSpaceConfig": {
+                    "maxTokensPerChunk": 150,
+                    "maxOverlapTokens": 15
+                }
+            }
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-goog-upload-url", session_url.as_str()),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/upload-session/custom-1"))
+        .and(headers("x-goog-upload-command", vec!["upload", "finalize"]))
+        .and(body_bytes(payload.to_vec()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "fileSearchStores/store-99/operations/op-custom",
+            "done": true,
+            "response": {
+                "name": "fileSearchStores/store-99/documents/doc-custom",
+                "displayName": "custom.txt",
+                "state": "STATE_ACTIVE"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let request = UploadToFileSearchStoreRequest::builder()
+        .display_name("custom.txt")
+        .mime_type("text/plain")
+        .custom_metadata(vec![CustomMetadata::string("author", "Alice")])
+        .chunking_config(ChunkingConfig::white_space(150, 15))
+        .build();
+
+    let op = client
+        .upload_to_file_search_store_with_request("fileSearchStores/store-99", payload, &request)
+        .await?;
+
+    assert!(op.is_done());
+    let doc = op.document().expect("document present");
+    assert_eq!(
+        doc.name.as_deref(),
+        Some("fileSearchStores/store-99/documents/doc-custom")
+    );
+    assert_eq!(doc.state, Some(DocumentState::Active));
+    Ok(())
+}
+
+#[tokio::test]
+async fn import_file_to_file_search_store_against_mock_server() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/fileSearchStores/target-store:importFile"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(body_json(serde_json::json!({
+            "fileName": "files/source-file-123",
+            "customMetadata": [{ "key": "source", "stringValue": "Files API" }]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "fileSearchStores/target-store/operations/import-op-1",
+            "done": false
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let request = ImportFileRequest::new("source-file-123")
+        .with_custom_metadata(vec![CustomMetadata::string("source", "Files API")]);
+
+    let op = client
+        .import_file_to_file_search_store("target-store", &request)
+        .await?;
+
+    assert_eq!(
+        op.name.as_deref(),
+        Some("fileSearchStores/target-store/operations/import-op-1")
+    );
+    assert!(!op.is_done());
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_file_search_operation_against_mock_server() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/fileSearchStores/store-1/operations/op-1"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "fileSearchStores/store-1/operations/op-1",
+            "done": true,
+            "response": {
+                "name": "fileSearchStores/store-1/documents/doc-1",
+                "displayName": "indexed-doc.txt",
+                "state": "STATE_ACTIVE"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let op = client
+        .get_file_search_operation("fileSearchStores/store-1/operations/op-1")
+        .await?;
+
+    assert!(op.is_done());
+    let doc = op.document().expect("document present");
+    assert_eq!(
+        doc.name.as_deref(),
+        Some("fileSearchStores/store-1/documents/doc-1")
+    );
+    assert_eq!(doc.state, Some(DocumentState::Active));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_document_against_mock_server() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/fileSearchStores/store-1/documents/doc-1"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "fileSearchStores/store-1/documents/doc-1",
+            "displayName": "queried-doc.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": "512",
+            "state": "STATE_ACTIVE"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let doc = client
+        .get_document("fileSearchStores/store-1/documents/doc-1")
+        .await?;
+
+    assert_eq!(
+        doc.name.as_deref(),
+        Some("fileSearchStores/store-1/documents/doc-1")
+    );
+    assert_eq!(doc.display_name.as_deref(), Some("queried-doc.txt"));
+    assert_eq!(doc.state, Some(DocumentState::Active));
+    assert_eq!(doc.size_bytes, Some(512));
     Ok(())
 }
