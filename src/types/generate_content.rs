@@ -188,9 +188,61 @@ pub struct Tools {
     pub mcp_servers: Option<Vec<Value>>,
 }
 
-/// Enables the Google Search grounding tool (no configuration required).
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct GoogleSearch {}
+/// Enables the Google Search grounding tool.
+///
+/// Powered by Google Search to ground model responses in real-time information.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleSearch {
+    /// The set of search types to enable. If not set, web search is enabled by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_types: Option<SearchTypes>,
+    /// Filter search results to a specific time range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_range_filter: Option<Interval>,
+}
+
+/// Different types of search that can be enabled on the [`GoogleSearch`] tool.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchTypes {
+    /// Enables web search. Only text results are returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearch>,
+    /// Enables image search. Image bytes are returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_search: Option<ImageSearch>,
+}
+
+/// Standard web search configuration.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct WebSearch {}
+
+/// Image search configuration.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct ImageSearch {}
+
+/// Represents a time interval for filtering search results.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Interval {
+    /// Inclusive start of the interval (RFC 3339 / ISO 8601 string).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<String>,
+    /// Exclusive end of the interval (RFC 3339 / ISO 8601 string).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<String>,
+}
+
+impl Interval {
+    /// Creates a new [`Interval`] with inclusive start and exclusive end timestamps.
+    pub fn new(start_time: impl Into<String>, end_time: impl Into<String>) -> Self {
+        Self {
+            start_time: Some(start_time.into()),
+            end_time: Some(end_time.into()),
+        }
+    }
+}
 
 /// Enables the code execution tool (no configuration required).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -770,27 +822,44 @@ impl Candidate {
 }
 
 /// A citation to a source used by the model in its response.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// See <https://ai.google.dev/api/caching#CitationSource>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct Citation {
+pub struct CitationSource {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start_index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub end_index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub uri: Option<String>,
+    /// License for the GitHub project that is attributed as a source for segment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
 }
 
+/// Type alias for [`CitationSource`].
+pub type Citation = CitationSource;
+
 /// Metadata containing citations for a candidate's content.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// See <https://ai.google.dev/api/caching#CitationMetadata>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct CitationMetadata {
-    #[serde(alias = "citationSources")]
-    pub citations: Vec<Citation>,
+    #[serde(default)]
+    pub citation_sources: Vec<CitationSource>,
 }
 
 /// A safety rating for a piece of content across a specific harm category.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SafetyRating {
     pub category: String,
     pub probability: String,
+    /// Was this content blocked because of this rating?
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<bool>,
     pub probability_score: Option<f32>,
     pub severity: Option<String>,
     pub severity_score: Option<f32>,
@@ -953,18 +1022,78 @@ pub struct FunctionResponse {
 }
 
 /// See <https://ai.google.dev/api/caching#FunctionResponsePart>.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum FunctionResponsePart {
     InlineData(FunctionResponseBlob),
+    FileData(FunctionResponseFileData),
 }
 
 /// See <https://ai.google.dev/api/caching#FunctionResponseBlob>.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponseBlob {
+    /// Optional display name of the blob.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub mime_type: String,
     pub data: String,
+}
+
+impl FunctionResponseBlob {
+    /// Creates a new [`FunctionResponseBlob`] with the given MIME type and base64 data.
+    pub fn new(mime_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self {
+            display_name: None,
+            mime_type: mime_type.into(),
+            data: data.into(),
+        }
+    }
+
+    /// Sets the optional display name for this blob.
+    pub fn with_display_name(mut self, display_name: impl Into<String>) -> Self {
+        self.display_name = Some(display_name.into());
+        self
+    }
+}
+
+/// URI-based data for a function response.
+///
+/// See <https://ai.google.dev/api/caching#FunctionResponseFileData>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionResponseFileData {
+    /// Optional display name of the file to distinguish file data.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// The IANA standard MIME type of the source data.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// URI of the file.
+    pub file_uri: String,
+}
+
+impl FunctionResponseFileData {
+    /// Creates a new [`FunctionResponseFileData`] with the given file URI.
+    pub fn new(file_uri: impl Into<String>) -> Self {
+        Self {
+            display_name: None,
+            mime_type: None,
+            file_uri: file_uri.into(),
+        }
+    }
+
+    /// Sets the display name for this file data.
+    pub fn with_display_name(mut self, display_name: impl Into<String>) -> Self {
+        self.display_name = Some(display_name.into());
+        self
+    }
+
+    /// Sets the MIME type for this file data.
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
 }
 
 /// See <https://ai.google.dev/api/caching#Scheduling>.
@@ -1084,11 +1213,12 @@ mod tests {
     };
 
     use super::{
-        Behavior, FunctionCallingConfig, FunctionCallingMode, FunctionResponse,
-        FunctionResponseBlob, FunctionResponsePart, GenerateContentRequest,
-        GenerateContentResponse, GenerateContentResponseResult, GenerationConfig, HarmCategory,
-        ImageConfig, LatLng, MediaResolution, ModelStage, RetrievalConfig, Scheduling,
-        SpeechConfig, ThinkingConfig, ThinkingLevel, ToolConfig,
+        Behavior, CitationMetadata, CitationSource, FunctionCallingConfig, FunctionCallingMode,
+        FunctionResponse, FunctionResponseBlob, FunctionResponseFileData, FunctionResponsePart,
+        GenerateContentRequest, GenerateContentResponse, GenerateContentResponseResult,
+        GenerationConfig, GoogleSearch, HarmCategory, ImageConfig, ImageSearch, Interval, LatLng,
+        MediaResolution, ModelStage, RetrievalConfig, SafetyRating, Scheduling, SearchTypes,
+        SpeechConfig, ThinkingConfig, ThinkingLevel, ToolConfig, WebSearch,
     };
 
     #[test]
@@ -1658,6 +1788,7 @@ mod tests {
             response: json!({ "temperature": 21 }),
             parts: Some(vec![FunctionResponsePart::InlineData(
                 FunctionResponseBlob {
+                    display_name: None,
                     mime_type: "image/png".to_string(),
                     data: "aGVsbG8=".to_string(),
                 },
@@ -1681,6 +1812,209 @@ mod tests {
                 }
             })
         );
+        Ok(())
+    }
+
+    #[test]
+    fn citation_metadata_parsed_from_citation_sources_serializes_back_to_citation_sources()
+    -> serde_json::Result<()> {
+        let input = json!({
+            "citationSources": [
+                {
+                    "startIndex": 0,
+                    "endIndex": 50,
+                    "uri": "https://github.com/example/repo",
+                    "license": "Apache-2.0"
+                }
+            ]
+        });
+
+        let metadata: CitationMetadata = serde_json::from_value(input.clone())?;
+
+        assert_eq!(metadata.citation_sources.len(), 1);
+        let citation = &metadata.citation_sources[0];
+        assert_eq!(citation.start_index, Some(0));
+        assert_eq!(citation.end_index, Some(50));
+        assert_eq!(
+            citation.uri.as_deref(),
+            Some("https://github.com/example/repo")
+        );
+        assert_eq!(citation.license.as_deref(), Some("Apache-2.0"));
+
+        let serialized = serde_json::to_value(&metadata)?;
+        assert_eq!(serialized, input);
+        assert!(
+            serialized
+                .as_object()
+                .unwrap()
+                .contains_key("citationSources")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn citation_source_parses_with_and_without_license() -> serde_json::Result<()> {
+        let with_license = json!({
+            "startIndex": 10,
+            "endIndex": 30,
+            "uri": "https://example.com",
+            "license": "BSD-3-Clause"
+        });
+        let parsed_with: CitationSource = serde_json::from_value(with_license.clone())?;
+        assert_eq!(parsed_with.license.as_deref(), Some("BSD-3-Clause"));
+        assert_eq!(serde_json::to_value(&parsed_with)?, with_license);
+
+        let without_license = json!({
+            "startIndex": 10,
+            "endIndex": 30,
+            "uri": "https://example.com"
+        });
+        let parsed_without: CitationSource = serde_json::from_value(without_license.clone())?;
+        assert_eq!(parsed_without.license, None);
+        assert_eq!(serde_json::to_value(&parsed_without)?, without_license);
+        Ok(())
+    }
+
+    #[test]
+    fn safety_rating_parses_with_and_without_blocked() -> serde_json::Result<()> {
+        let with_blocked = json!({
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "probability": "HIGH",
+            "blocked": true,
+            "probabilityScore": 0.95
+        });
+        let rating_blocked: SafetyRating = serde_json::from_value(with_blocked)?;
+        assert_eq!(rating_blocked.blocked, Some(true));
+        assert_eq!(rating_blocked.category, "HARM_CATEGORY_HATE_SPEECH");
+        assert_eq!(rating_blocked.probability, "HIGH");
+        let serialized_blocked = serde_json::to_value(&rating_blocked)?;
+        assert_eq!(serialized_blocked["blocked"], true);
+
+        let without_blocked = json!({
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "probability": "NEGLIGIBLE"
+        });
+        let rating_unblocked: SafetyRating = serde_json::from_value(without_blocked)?;
+        assert_eq!(rating_unblocked.blocked, None);
+        let serialized_unblocked = serde_json::to_value(&rating_unblocked)?;
+        assert!(
+            !serialized_unblocked
+                .as_object()
+                .unwrap()
+                .contains_key("blocked")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn google_search_parses_and_serializes_search_types_and_time_range_filter()
+    -> serde_json::Result<()> {
+        let input = json!({
+            "searchTypes": {
+                "webSearch": {},
+                "imageSearch": {}
+            },
+            "timeRangeFilter": {
+                "startTime": "2026-01-01T00:00:00Z",
+                "endTime": "2026-10-30T00:00:00Z"
+            }
+        });
+
+        let search: GoogleSearch = serde_json::from_value(input.clone())?;
+        let search_types = search.search_types.as_ref().expect("searchTypes");
+        assert_eq!(search_types.web_search, Some(WebSearch {}));
+        assert_eq!(search_types.image_search, Some(ImageSearch {}));
+
+        let filter = search.time_range_filter.as_ref().expect("timeRangeFilter");
+        assert_eq!(filter.start_time.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(filter.end_time.as_deref(), Some("2026-10-30T00:00:00Z"));
+
+        let serialized = serde_json::to_value(&search)?;
+        assert_eq!(serialized, input);
+
+        let constructed = GoogleSearch {
+            search_types: Some(SearchTypes {
+                web_search: Some(WebSearch {}),
+                image_search: Some(ImageSearch {}),
+            }),
+            time_range_filter: Some(Interval::new(
+                "2026-01-01T00:00:00Z",
+                "2026-10-30T00:00:00Z",
+            )),
+        };
+        assert_eq!(serde_json::to_value(&constructed)?, input);
+        Ok(())
+    }
+
+    #[test]
+    fn google_search_empty_serializes_to_empty_object() -> serde_json::Result<()> {
+        let empty = GoogleSearch::default();
+        let value = serde_json::to_value(&empty)?;
+        assert_eq!(value, json!({}));
+
+        let parsed: GoogleSearch = serde_json::from_value(json!({}))?;
+        assert_eq!(parsed, GoogleSearch::default());
+        Ok(())
+    }
+
+    #[test]
+    fn function_response_blob_parses_with_and_without_display_name() -> serde_json::Result<()> {
+        let with_name = json!({
+            "displayName": "photo.png",
+            "mimeType": "image/png",
+            "data": "aGVsbG8="
+        });
+        let blob: FunctionResponseBlob = serde_json::from_value(with_name.clone())?;
+        assert_eq!(blob.display_name.as_deref(), Some("photo.png"));
+        assert_eq!(blob.mime_type, "image/png");
+        assert_eq!(blob.data, "aGVsbG8=");
+        assert_eq!(serde_json::to_value(&blob)?, with_name);
+
+        let without_name = json!({
+            "mimeType": "image/png",
+            "data": "aGVsbG8="
+        });
+        let blob: FunctionResponseBlob = serde_json::from_value(without_name.clone())?;
+        assert_eq!(blob.display_name, None);
+        assert_eq!(serde_json::to_value(&blob)?, without_name);
+        Ok(())
+    }
+
+    #[test]
+    fn function_response_part_parses_and_serializes_file_data() -> serde_json::Result<()> {
+        let input = json!({
+            "fileData": {
+                "displayName": "data.csv",
+                "mimeType": "text/csv",
+                "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/abc123"
+            }
+        });
+
+        let part: FunctionResponsePart = serde_json::from_value(input.clone())?;
+        assert_eq!(
+            part,
+            FunctionResponsePart::FileData(FunctionResponseFileData {
+                display_name: Some("data.csv".to_string()),
+                mime_type: Some("text/csv".to_string()),
+                file_uri: "https://generativelanguage.googleapis.com/v1beta/files/abc123"
+                    .to_string(),
+            })
+        );
+        assert_eq!(serde_json::to_value(&part)?, input);
+
+        let minimal = json!({
+            "fileData": {
+                "fileUri": "https://example.com/file"
+            }
+        });
+        let part_min: FunctionResponsePart = serde_json::from_value(minimal.clone())?;
+        assert_eq!(
+            part_min,
+            FunctionResponsePart::FileData(FunctionResponseFileData::new(
+                "https://example.com/file"
+            ))
+        );
+        assert_eq!(serde_json::to_value(&part_min)?, minimal);
         Ok(())
     }
 
@@ -1856,14 +2190,14 @@ mod tests {
               "parts": [
                 {
                   "text": "**What do you mean? An African or a European swallow?**\n\nIf you are looking for the actual physics rather than the *Monty Python and the Holy Grail* reference, here is the breakdown:\n\n**1. The European Swallow**\nBased on an analysis published by Jonathan Corum (using data on the Strouhal number of cruising flight), the estimated airspeed velocity of an unladen European Swallow is roughly **11 meters per second**, or **24 miles per hour**.\n\n**2. The African Swallow**\nData on the African swallow is scarcer, mostly because—as the guard in the movie points out—African swallows are non-migratory. However, since they are similar in size to their European counterparts, their cruising speed would likely be comparable.\n\nBut of course, the real question is: *Could it carry a coconut?* (A five-ounce bird could not carry a one-pound coconut. It is a simple question of weight ratios.)",
-                  "thoughtSignature": "EqcZCqQZAdHtim/53UNFI7YRLcEDch1I/mLfWNT6lVjgXb7RsNnYn8JLU8Y6UhAi4nkLJ/nK2l44Y+JJZimQ2rLpRfdlBAPkhVsuZYenAY7MRXG9GQrSzz1elR+L6FAb0dyb9snnGz5NdlKCyS9VIWKIhghmHA60oEnEUexaJD2mq3ZV4kJ8R/d+UJEEdOD9CdlnB1WnOvHaiT15mLSj8JxclI+1mml86b5hjA0F+MLVWesa4gjo6/OfNo1k+tA+JioUAu8hgZ5DJttNxs/BvrLMyY/+d6qm40Ht45BuNlKUjFTkrUOIx5oAld3PnNj804Ou3F/sv8i5UMh9TcWyuiOjP3lZU5t1GEKQJ/YY9CxN/Zl71Kzk51Z+92IV2tKLqZVsEkrIr5o33QmNRTIeX0zMSQRdhlTBPuwSa+l91SV56cPK0I7P6UPguc3qGD8E3wfUC+fByDzX4JZ6OuhyrwcCCgbyjnBgI/FoWBA364cKONEH69p851Jy+zRaI9hWKKOQ/hqHqpWL266vgnALkvjcfZS3Frc6rRTvRIzetVufrJM3i9OAfnoLPZz5crraRQgUpgcPUd9fYhl59PIK35jRaENXunDUa8NE/J8kObcZE+910NxsUo7LzsGssr6UOPM6slKhnocnbqCrrNLhoF0jLXbSObuCXKh5HuGV8Y51UdsK6oUuct+ScfOZGBl+/6LhaGmlS0Ab58R7CO8UqhX4j91H8YW6xtDTQoAIXNU2j4Zq7lkpH0b5Vv7ZhFnbbc1OgTtboTcKwyRXgZFlBa6NNIb7GvRMyKdWW+sHXFAXGohZubp7DXsr6gQ/8eqcTuiiLKChRbY6MhG14OkGw4/LcuBAxEg6Fy7JX3tlMfto3LcfhFVvlmM1XuWACR9OJLr49YAkBYsMWl95qK5tSG0Wo/hAqjcPWPszrzK9Uo9AsDpsCHGnX57Ytcsi60y+jnV7iQqhoWtaT+UJW9FbxOPpKTsQw0k2GPM/1d+ulMz2IYPrN/Bsuk34OyAUID1zEUnSro0Q4camHfW2wnJvW77rLmfqO2b0M4+UuEgbgB/dyQtICsNndaO1x6S3pL8/typqoakwx/9xg02QVzLLRvfs4Su9eSAsKL/QfQCI9dmS8O0kvA1DqbUdxO6HfrfCVpGKoLajB4dZ/1nplNFFL+ap7vXOU9F4foXemT4f71T3S93NWb6gFU8jB8WxNaoWVBoeuP7iJNMqqBZPvV9SJ94lELlV/LZKlZ+pqQML/Gfe565AmXD34ekgE5ZGkwQxSoP8BksbDnL41GxEZtvWHcr+kSZK2FoTBwsXBye43qy1ZFYV+guSPqgsy5S215c2r4g+zfJ2vlC5+k2621Dwex7POA68LrtfbyeFJ8gQY7nZMPNp2gZQHmY/imA1Fb0jiCfMzYUiWumJeyOeiSUE5p/slwV0SryaYtT73fjx37F/iUAE5zl6yEo8v45aiB2XNgxdTU4bjHEFD+sj/6DGp27ukt6vLxN/QhmPvU7yYUA+u1WbQblof6VN7AwhVUqgqUx9Je0kSXPrI12K/2yC6eZnGuXeicqwIxCQWh9z9o24NzUkaiVC7VnSItVgXDWwviwAe4H1LxNU9y6j+Y0R8iGclRQVN8haBc1x7BWO6raGsLRrKblykBsIydnuz1Bvjk4eEaoH1rCzzIiuj1ZqG3bo/bLxjJw1h1KmnXkywo8alCusMIog71a3FQnST+idwJ9+tJU31rqMxinD1kUwG5ZYmFnpRZWHD57gsa5rzFptjbnkUxfBhHD3+7mO6qlgMidjzfv77MuFWRVyglDMD+eNvlX6vmPm93Qq4rDZTDssck6IYCaQ6TuqXJ2WEal0HDgaX/rlyhUL/4T7Ptk2/QoQqekUasvbjPhpn25R9AGTIcEwdoVsK2kC4ftvtkc2g1jE4PK2fLqe6sNfCEebZT18nx5FdgELbkSB+ss3aLfvWVVC0EJJmdlW+F1mxxPnkfvwcCfj4YKsfhEMoiPxbs0As2dtbaV9xcrhFlGZFoA/idudJqRPEuZvhtiJ2L0MQMuDWqT6kDr6wqnAghj2olacMb9rU5IlK9hfoCalMp7/adEJLpzJ7RdZd6o8cGq0D2v9lsT/2OJtq+kiMIG3gzIDrHSCK7v3XFpmA6DcMsgUHyYGSe1Mfe6fD+mPXyKWEi+hp3SJjDHa3Xk0bx5java0fZc/q/t9yxxjijIVGlRrduMj0GQpi3JHOL/JZoGWHrMSQFBmLIEypj+Dp1nImOja7j69VlK6q1dxELdx1sE5eIzTpk0/bRZ3oyqFtXYwyWUJsx5evdJSPIGbM8lgQsV8yO9U8LRot2BhWyfsU8NWRsHY5ihYb2K/Y9saE1iML4uqvIAK36eG9DuRaz2zIa6K3G5Xr/U8c0BxUxNNcWIra7TPyVmIXhLm85ghX9qKWNM2YQO/02tvIAI/9+8qANblayjg31j+FjME1NNGQg3jxA28QyfN39b0Fg8sD5MWmHP6MtvfVwx0JM88n1eCJiZ0No5BFUOB/EfgtiXp48ledg66cLjPmU9rjKPNyK4iUsRO7IY9X0/7L4M+d+8tBOy14Bfjn0ELi6HdF5+HVgWp3DViCn8iX4HCVrTX9S4/ZrgJVDJdI5axuGlsaH3VqCV0Rfes/p3MfcjUVOpBja+byTWMbM0ZONjrF3NAtzwZwLN+QDVEVS8Hso11mYsL6IvEbKsGYySBcX6qZ57p0MlPeC0GPPy0DkDca19W/fWFkrlPP60plNymq+c9HZ1Ghmg9YSGluckJLidqR6wuCSSkyaSwjJaJYnu4MIfXrLP4Q0UmKwvVJFSNqhtDSaus+U2+m8sl6CadTs4trw2iVh78/Wpghvido18f7A40MFo8E3OLN9XEgXA2FLMPrGiZM3JFTMutokburAgTAxs7CmbqilP4ArWvxEvG+TbmCatA5PhhGibms3OO910cjaToRUXriE8K7kHRM7Miui7qDcCM+wcgPOV+sYNNucAAbseGi+Mej1tmMLTUO4k8q2bRcadMaijASasX6Q8k6k1YGy89HTh1UkwCLdd6F4eYHsDFpMGjwJ2I1fJ/4lmTAUYOHP3n4p4ovOSoptgIul9sty7iqZnQlkQHeVWQSwMzyBbcxTqA6GDsdNk5GF+Wjaf3C3F+uOhRY+yD0wbb43d3rpEMPkThbTTsN8ricg0bDSIWnM2FKfsQ0QFbZuC2JrkeSEZuLd3RldLsUXBzrQl2ub49oztmjEQSu6GePyz9LAeQRJd6EUQ4/I/vu1SLyHcXZAch4zrzk2u+7OWehE+i/CGzRWL14/x+z3PPmguYOqS1rJdCWDIKlIXD9nZc/heFhQ4QiV2pvr0ElYHCDnAq/SgpPC7EFy4BGmz6cMJ2Az44cijzOFbYZ1+rkbxvLV4Q2QVDj5tgBNYrV7FYBs+B0kF3D/ijbp1JGowGDsXJC1KaUpu01OL9962042O3b4RIU6NsGa0irMip/IAlFYhEW72Aj6oNvqNKDf7VjT3GYvRRz51zPMaKymBLCDw2lSrz7tTkN8L3w7dyLzBpzNI894Id3B6lf+ummAp+w0y0Q/jQnNzUFJznXIoais7JwcC+jxkolAW6iCXwGYGbYLTgV1jKH1GdJf10yzMo/obPF2F4vtRITmq3PGRV1DEm9ELbu3ajhSP4vh9eUqxki/ORrJibn6MVBz1GtzOzFBZ8br2ZZLCxqq4bTVj/BXPngVZ6bxmxdn7rf15a4IcPRZ9hPEl/M3vIl6cSJLb3M45lADfDtBW70dXMFAcof2ipkngcOf2NY/dYuGUMMyOp/Xetvy4kFY2ye2nU0PEq0GhwxxCB/zrGzxprC7W93sVETAlPXyb9yirlo4elyaNIZMt+sqlUHGoFyK3xDPlkNAwrsQWgghNwMrtZ7Fm683n38X9HVwgGjJpeoODfIph+f0vDl+ncO2GywdSbJXQg5Tf5PTONvZb+8Kd2F7Lv8mljtqAKHoh/b7MyogGvA914hUL3jKFClnAaD9xXWCK83stRL2Hqg2PmY+aNwB3m/Y54QEYdq+Xu7nIWo8EkncKTB4GwLb7Cyep88E5WNnyaU1Y337xAEGN9403pqCp+abrFgMOLl1MAPoWXNEGsQIEqVJECkPgpdR1eU83LjPXjSthCe5mo2Vc35IgOOA94UEDfaXyRqQEE5CH+QRdXCc4oMKt3cTUHiPlPbHayKVH5d1lntDxMgJ5tSN1kwcFQMKYXJdYSZqatoYNar0tnSF2EuGPs2ium1h4Il/NKCPiZySDbYRwDITMu+RVMvr5CbmXHF93bz/d0n8Qg8A2qmrU="
-                }
-              ],
-              "role": "model"
-            },
-            "finishReason": "STOP",
-            "index": 0
-          }"#;
+                  "thoughtSignature": "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"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }"#;
         let _ = serde_json::from_str::<Candidate>(input).unwrap();
     }
 
@@ -1876,8 +2210,7 @@ mod tests {
               "content": {
                 "parts": [
                   {
-                    "text": "**What do you mean? An African or a European swallow?**\n\nIf you are looking for the actual physics rather than the *Monty Python and the Holy Grail* reference, here is the breakdown:\n\n**1. The European Swallow**\nBased on an analysis published by Jonathan Corum (using data on the Strouhal number of cruising flight), the estimated airspeed velocity of an unladen European Swallow is roughly **11 meters per second**, or **24 miles per hour**.\n\n**2. The African Swallow**\nData on the African swallow is scarcer, mostly because—as the guard in the movie points out—African swallows are non-migratory. However, since they are similar in size to their European counterparts, their cruising speed would likely be comparable.\n\nBut of course, the real question is: *Could it carry a coconut?* (A five-ounce bird could not carry a one-pound coconut. It is a simple question of weight ratios.)",
-                    "thoughtSignature": "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"
+                    "text": "Hello, world!"
                   }
                 ],
                 "role": "model"
@@ -1886,22 +2219,22 @@ mod tests {
               "index": 0
             }
           ],
-          "usageMetadata": {
-            "promptTokenCount": 11,
-            "candidatesTokenCount": 202,
-            "totalTokenCount": 1041,
-            "promptTokensDetails": [
-              {
-                "modality": "TEXT",
-                "tokenCount": 11
-              }
-            ],
-            "thoughtsTokenCount": 828
-          },
-          "modelVersion": "gemini-3-pro-preview",
-          "responseId": "2uUdaYPkG73WvdIP2aPs2Ak"
-        }
-      "#;
+  "usageMetadata": {
+    "promptTokenCount": 11,
+    "candidatesTokenCount": 202,
+    "totalTokenCount": 1041,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 11
+      }
+    ],
+    "thoughtsTokenCount": 828
+  },
+  "modelVersion": "gemini-3-pro-preview",
+  "responseId": "2uUdaYPkG73WvdIP2aPs2Ak"
+}
+"#;
         let _ = serde_json::from_str::<GenerateContentResponseResult>(input).unwrap();
     }
 }
