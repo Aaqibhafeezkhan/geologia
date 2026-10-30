@@ -1693,3 +1693,192 @@ async fn files_end_to_end_upload_poll_generate_and_delete_lifecycle() -> Result<
     client.delete_file(&file_name).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn batch_generate_content_against_mock_server_checks_path_key_body_and_response() -> Result<()>
+{
+    let mock_server = MockServer::start().await;
+
+    let request_body = serde_json::json!({
+        "batch": {
+            "displayName": "test-batch",
+            "inputConfig": {
+                "requests": {
+                    "requests": [
+                        {
+                            "request": {
+                                "contents": [
+                                    {
+                                        "role": "user",
+                                        "parts": [{ "text": "Say hi!" }]
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    });
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-2.5-flash:batchGenerateContent"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(body_json(request_body.clone()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "batches/op-batch-123",
+            "metadata": {
+                "name": "batches/op-batch-123",
+                "model": "models/gemini-2.5-flash",
+                "displayName": "test-batch",
+                "state": "BATCH_STATE_PENDING",
+                "createTime": "2026-10-30T19:00:00Z",
+                "updateTime": "2026-10-30T19:00:00Z",
+                "batchStats": {
+                    "requestCount": "1",
+                    "pendingRequestCount": "1"
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let request: BatchGenerateContentRequest = serde_json::from_value(request_body)?;
+    let op = client
+        .batch_generate_content(&request, "gemini-2.5-flash")
+        .await?;
+
+    assert_eq!(op.name.as_deref(), Some("batches/op-batch-123"));
+    assert!(!op.is_done());
+    assert_eq!(op.state(), Some(BatchState::Pending));
+    let batch = op.batch().expect("batch metadata");
+    assert_eq!(batch.display_name.as_deref(), Some("test-batch"));
+    assert_eq!(
+        batch.batch_stats.as_ref().and_then(|s| s.request_count),
+        Some(1)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_batch_against_mock_server_handles_prefixed_and_unprefixed_name() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/batches/batch-456"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "batches/batch-456",
+            "metadata": {
+                "name": "batches/batch-456",
+                "model": "models/gemini-2.5-flash",
+                "displayName": "completed-batch",
+                "state": "BATCH_STATE_SUCCEEDED",
+                "output": {
+                    "responsesFile": "files/output-jsonl-123"
+                }
+            },
+            "done": true,
+            "response": {
+                "responsesFile": "files/output-jsonl-123"
+            }
+        })))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    // 1. With prefix
+    let op1 = client.get_batch("batches/batch-456").await?;
+    assert!(op1.is_done());
+    assert_eq!(op1.state(), Some(BatchState::Succeeded));
+    assert_eq!(
+        op1.output().and_then(|o| o.responses_file.as_deref()),
+        Some("files/output-jsonl-123")
+    );
+
+    // 2. Without prefix
+    let op2 = client.get_batch("batch-456").await?;
+    assert!(op2.is_done());
+    assert_eq!(op2.state(), Some(BatchState::Succeeded));
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_generate_content_maps_structured_gemini_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-2.5-flash:batchGenerateContent"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {
+                "code": 400,
+                "message": "Invalid inputConfig: neither requests nor fileName specified",
+                "status": "INVALID_ARGUMENT"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let request = BatchGenerateContentRequest::new(GenerateContentBatch::default());
+    let err = client
+        .batch_generate_content(&request, "gemini-2.5-flash")
+        .await
+        .unwrap_err();
+
+    match err {
+        crate::error::Error::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 400);
+            assert_eq!(vertex_err.status, "INVALID_ARGUMENT");
+            assert!(vertex_err.message.contains("Invalid inputConfig"));
+        }
+        other => panic!("expected VertexError, got: {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_batch_maps_not_found_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/batches/nonexistent"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "error": {
+                "code": 404,
+                "message": "Batch not found: batches/nonexistent",
+                "status": "NOT_FOUND"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let err = client.get_batch("nonexistent").await.unwrap_err();
+
+    match err {
+        crate::error::Error::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 404);
+            assert_eq!(vertex_err.status, "NOT_FOUND");
+        }
+        other => panic!("expected VertexError, got: {other:?}"),
+    }
+    Ok(())
+}
