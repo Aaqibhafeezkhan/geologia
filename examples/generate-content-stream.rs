@@ -25,11 +25,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .stream_generate_content(&request, "gemini-3.1-flash-lite")
         .await?;
 
-    while let Some(content) = response_stream.next().await {
-        match content {
-            Ok(response) => println!("Response: {:?}", response.candidates[0].get_text().unwrap()),
-            Err(err) => eprintln!("Error: {}", err),
+    let mut last_finish_reason = None;
+    while let Some(chunk) = response_stream.next().await {
+        let response = chunk?;
+        if let Some(candidate) = response.candidates.first() {
+            if let Some(text) = candidate.get_text() {
+                println!("Response: {text:?}");
+            }
+            if candidate.finish_reason.is_some() {
+                last_finish_reason.clone_from(&candidate.finish_reason);
+            }
         }
     }
+    println!("Finish reason: {last_finish_reason:?}");
     Ok(())
 }

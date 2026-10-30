@@ -91,7 +91,19 @@ impl GeminiClient {
     /// Sends a content generation request and returns a stream of response chunks via SSE.
     ///
     /// Each item in the stream is a [`GenerateContentResponseResult`] containing one or more
-    /// candidates. Useful for displaying incremental output as it is generated.
+    /// candidates (or [`PromptFeedback`] when the prompt is blocked). Useful for displaying
+    /// incremental output as it is generated.
+    ///
+    /// SSE events without a `data:` field (such as comments and keep-alives) are skipped.
+    /// Mid-stream transport or SSE decoding failures are yielded as
+    /// `Err(`[`Error::EventSourceError`](crate::error::Error::EventSourceError)`)` items rather
+    /// than silently terminating the stream.
+    ///
+    /// Note that a stream ending cleanly (`None` with no preceding `Err`) only indicates that the
+    /// underlying HTTP body reached EOF between SSE events; it does not by itself guarantee that
+    /// the model finished generating. Callers should inspect [`Candidate::finish_reason`] on the
+    /// last chunk (or [`GenerateContentResponseResult::prompt_feedback`] if no candidates were
+    /// returned) to confirm the response is complete.
     pub async fn stream_generate_content(
         &self,
         request: &GenerateContentRequest,
@@ -107,16 +119,25 @@ impl GeminiClient {
             .json(&request)
             .send()
             .await?;
-        Ok(Self::error_for_status(resp)
-            .await?
-            .event_stream()
-            .filter_map(Self::parse_event))
+        Ok(Self::response_event_stream(
+            Self::error_for_status(resp).await?,
+        ))
+    }
+
+    fn response_event_stream(
+        resp: reqwest::Response,
+    ) -> impl Stream<Item = GeminiResult<GenerateContentResponseResult>> {
+        resp.event_stream().filter_map(Self::parse_event)
     }
 
     fn parse_event(
         event_result: std::result::Result<ServerSentEvent, LinesCodecError>,
     ) -> Option<GeminiResult<GenerateContentResponseResult>> {
-        let data = event_result.map_err(Into::<GeminiError>::into).ok()?.data?;
+        let event = match event_result {
+            Ok(event) => event,
+            Err(err) => return Some(Err(err.into())),
+        };
+        let data = event.data?;
 
         Some(
             serde_json::from_str::<GenerateContentResponse>(&data)
