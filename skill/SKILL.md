@@ -5,16 +5,17 @@ description: >
   into their projects. Use this skill whenever the user is working with geologia, building Rust
   apps that call Gemini models, generating text or images from Rust, using function calling with
   Gemini in Rust, or asking how to add AI features to a Rust project using the geologia crate.
-  Also trigger when the user asks about listing or inspecting available Gemini models, streaming
-  Gemini responses, token counting, text embeddings, or structured output in Rust — even if they
-  don't explicitly mention geologia.
+  Also trigger when the user asks about listing or inspecting available Gemini models, uploading
+  or managing media files via the Gemini Files API, streaming Gemini responses, token counting,
+  text embeddings, or structured output in Rust — even if they don't explicitly mention geologia.
 ---
 
 # geologia
 
 `geologia` is an async Rust client for Google's Generative AI API (Gemini). It supports model
-discovery (`models.list` and `models.get`), text generation (including streaming), token counting,
-text embeddings, image generation (Imagen), context caching, and function calling.
+discovery (`models.list` and `models.get`), media file management (`files` / `media.upload`),
+text generation (including streaming), token counting, text embeddings, image generation (Imagen),
+context caching, and function calling.
 
 ## Adding the dependency
 
@@ -443,6 +444,81 @@ Other client methods:
 - `client.delete_cached_content(name)`: explicitly remove a cache.
 
 See `examples/context-caching.rs` for a runnable version.
+
+---
+
+## Uploading and referencing files (Files API)
+
+Upload media or documents up to 2 GB via the resumable Files API (`upload_file` or
+`upload_file_with_metadata`) and reuse their URI across `generate_content` requests without
+re-sending raw bytes inline.
+
+Uploaded files (especially video, audio, and large PDFs) are processed asynchronously
+(`FileState::Processing` -> `FileState::Active`, or `FileState::Failed`). Always wait until
+`file.state == Some(FileState::Active)` before referencing `file.uri`:
+
+```rust
+use std::time::Duration;
+use geologia::prelude::{
+    Content, FileState, GeminiClient, GenerateContentRequest, Part, PartData, Role,
+};
+use serde_json::json;
+
+let client = GeminiClient::new(std::env::var("GEMINI_API_KEY")?);
+let bytes = std::fs::read("report.pdf")?;
+
+// 1. Upload bytes via the resumable upload endpoint (`POST /upload/v1beta/files`).
+let mut file = client
+    .upload_file(&bytes, "application/pdf", Some("Quarterly Report.pdf"))
+    .await?;
+let file_name = file.name.clone().expect("server assigns files/{id}");
+
+// 2. Poll `get_file` until processing completes (`FileState::Active`).
+while file.state != Some(FileState::Active) {
+    if file.state == Some(FileState::Failed) {
+        return Err(format!("File processing failed: {:?}", file.error).into());
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    file = client.get_file(&file_name).await?;
+}
+
+// 3. Reference `file.uri` in `generate_content` via `PartData::FileData`.
+let file_part = Part {
+    thought: None,
+    thought_signature: None,
+    part_metadata: None,
+    media_resolution: None,
+    video_metadata: None,
+    speech_metadata: None,
+    data: PartData::FileData(json!({
+        "fileUri": file.uri.as_deref().unwrap(),
+        "mimeType": file.mime_type.as_deref().unwrap_or("application/pdf"),
+    })),
+};
+
+let request = GenerateContentRequest::builder()
+    .contents(vec![
+        Content::builder()
+            .role(Role::User)
+            .add_part(file_part)
+            .add_text_part("Summarize the key findings in three bullet points.")
+            .build(),
+    ])
+    .build();
+
+let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+
+// 4. Clean up when finished (files otherwise expire automatically after ~48 hours).
+client.delete_file(&file_name).await?;
+```
+
+Other client methods:
+- `client.upload_file_with_metadata(data, mime_type, &File::builder().name("my-id").display_name("...").build())`: upload with a custom resource ID (`files/my-id`).
+- `client.get_file(name)`: fetch `File` metadata and check `state` / `error` / `video_metadata`.
+- `client.list_files(page_size, page_token)`: paginated listing of uploaded/generated files (default page size 10, max 100).
+- `client.delete_file(name)`: delete an uploaded file immediately.
+
+See `examples/files.rs` for a runnable version.
 
 ---
 

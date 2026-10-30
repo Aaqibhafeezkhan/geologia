@@ -269,6 +269,32 @@ pub struct ListFilesResponse {
     pub next_page_token: Option<String>,
 }
 
+/// Request body for initiating a file upload via `POST /upload/v1beta/files`.
+///
+/// Sent as the JSON metadata payload when starting a resumable upload session in
+/// [`GeminiClient::upload_file`](crate::prelude::GeminiClient::upload_file) and
+/// [`GeminiClient::upload_file_with_metadata`](crate::prelude::GeminiClient::upload_file_with_metadata).
+///
+/// See <https://ai.google.dev/api/files#method:-media.upload>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFileRequest {
+    /// Optional metadata for the [`File`] to create (such as [`File::name`] or
+    /// [`File::display_name`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<File>,
+}
+
+/// Response body returned by `POST /upload/v1beta/files` upon finalizing a file upload.
+///
+/// See <https://ai.google.dev/api/files#response-body_3>.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFileResponse {
+    /// Metadata for the newly created [`File`].
+    pub file: File,
+}
+
 /// Serde adapter for Protobuf `int64` optional fields, which serialize as decimal JSON strings
 /// (`"1048576"`) and deserialize from either decimal strings or JSON integers per Proto3 JSON
 /// mapping.
@@ -363,7 +389,9 @@ mod tests {
     use serde_json::json;
 
     use crate::prelude::{
-        File as PreludeFile, FileSource as PreludeFileSource, FileState as PreludeFileState,
+        CreateFileRequest as PreludeCreateFileRequest,
+        CreateFileResponse as PreludeCreateFileResponse, File as PreludeFile,
+        FileSource as PreludeFileSource, FileState as PreludeFileState,
         ListFilesResponse as PreludeListFilesResponse, Status as PreludeStatus,
         VideoFileMetadata as PreludeVideoFileMetadata,
     };
@@ -648,6 +676,62 @@ mod tests {
         assert!(response.files.is_empty());
         assert!(response.next_page_token.is_none());
         assert_eq!(serde_json::to_value(&response)?, json!({}));
+        Ok(())
+    }
+
+    #[test]
+    fn create_file_request_serializes_with_and_without_metadata() -> serde_json::Result<()> {
+        let empty = PreludeCreateFileRequest::default();
+        assert_eq!(serde_json::to_value(&empty)?, json!({}));
+        assert_eq!(
+            serde_json::from_value::<PreludeCreateFileRequest>(json!({}))?,
+            empty
+        );
+
+        let with_metadata = PreludeCreateFileRequest {
+            file: Some(
+                File::builder()
+                    .name("files/custom-123")
+                    .display_name("Architecture Overview.pdf")
+                    .build(),
+            ),
+        };
+        let expected = json!({
+            "file": {
+                "name": "files/custom-123",
+                "displayName": "Architecture Overview.pdf"
+            }
+        });
+        assert_eq!(serde_json::to_value(&with_metadata)?, expected);
+        assert_eq!(
+            serde_json::from_value::<PreludeCreateFileRequest>(expected)?,
+            with_metadata
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn create_file_response_parses_and_rejects_missing_file() -> serde_json::Result<()> {
+        let payload = json!({
+            "file": {
+                "name": "files/uploaded-1",
+                "displayName": "poem.txt",
+                "mimeType": "text/plain",
+                "sizeBytes": "128",
+                "state": "PROCESSING",
+                "source": "UPLOADED",
+                "uri": "https://generativelanguage.googleapis.com/v1beta/files/uploaded-1"
+            }
+        });
+
+        let parsed: PreludeCreateFileResponse = serde_json::from_value(payload.clone())?;
+        assert_eq!(parsed.file.name.as_deref(), Some("files/uploaded-1"));
+        assert_eq!(parsed.file.state, Some(FileState::Processing));
+        assert_eq!(parsed.file.size_bytes, Some(128));
+        assert_eq!(serde_json::to_value(&parsed)?, payload);
+
+        // `file` is required on `CreateFileResponse`; an empty object must fail strictly.
+        assert!(serde_json::from_value::<PreludeCreateFileResponse>(json!({})).is_err());
         Ok(())
     }
 }

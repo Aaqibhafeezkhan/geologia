@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::network::event_source::ServerSentEvent;
-use wiremock::matchers::{body_json, header, method, path, query_param};
+use wiremock::matchers::{body_bytes, body_json, header, headers, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -125,6 +125,55 @@ fn all_endpoint_urls_build_from_configured_base_url() {
     assert_eq!(
         client.file_resource_url("clip-123abc"),
         "https://custom.endpoint.example/v1/files/clip-123abc"
+    );
+    assert_eq!(
+        client.upload_endpoint_url("files"),
+        "https://custom.endpoint.example/upload/v1/files"
+    );
+}
+
+#[test]
+fn upload_endpoint_url_derives_upload_prefix_from_configured_base_url() {
+    let default_client = GeminiClient::new("test-api-key".into());
+    assert_eq!(
+        default_client.upload_endpoint_url("files"),
+        "https://generativelanguage.googleapis.com/upload/v1beta/files"
+    );
+    assert_eq!(
+        default_client.upload_endpoint_url("/files"),
+        "https://generativelanguage.googleapis.com/upload/v1beta/files"
+    );
+
+    let trailing_slash = GeminiClient::builder("test-api-key")
+        .base_url("https://generativelanguage.googleapis.com/v1beta/")
+        .build();
+    assert_eq!(
+        trailing_slash.upload_endpoint_url("files"),
+        "https://generativelanguage.googleapis.com/upload/v1beta/files"
+    );
+
+    let prefixed_proxy = GeminiClient::builder("test-api-key")
+        .base_url("https://proxy.example.com/gemini/v1beta")
+        .build();
+    assert_eq!(
+        prefixed_proxy.upload_endpoint_url("files"),
+        "https://proxy.example.com/gemini/upload/v1beta/files"
+    );
+
+    let unversioned_root = GeminiClient::builder("test-api-key")
+        .base_url("http://127.0.0.1:8080")
+        .build();
+    assert_eq!(
+        unversioned_root.upload_endpoint_url("files"),
+        "http://127.0.0.1:8080/upload/files"
+    );
+
+    let unversioned_prefix = GeminiClient::builder("test-api-key")
+        .base_url("https://proxy.example.com/custom-api")
+        .build();
+    assert_eq!(
+        unversioned_prefix.upload_endpoint_url("files"),
+        "https://proxy.example.com/custom-api/upload/files"
     );
 }
 
@@ -1127,5 +1176,431 @@ async fn delete_file_maps_permission_denied_error() -> Result<()> {
         }
         other => panic!("expected VertexError, got {other:?}"),
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_file_executes_two_step_resumable_protocol_with_display_name() -> Result<()> {
+    let mock_server = MockServer::start().await;
+    let payload: &[u8] = b"\x00\x01Hello resumable binary upload!\xff";
+    let session_url = format!(
+        "{}/upload/v1beta/files?upload_id=session-xyz-123",
+        mock_server.uri()
+    );
+
+    // Step 1: Start resumable upload against `/upload/files` (unversioned mock root).
+    Mock::given(method("POST"))
+        .and(path("/upload/files"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(header("x-goog-upload-protocol", "resumable"))
+        .and(header("x-goog-upload-command", "start"))
+        .and(header(
+            "x-goog-upload-header-content-length",
+            payload.len().to_string().as_str(),
+        ))
+        .and(header(
+            "x-goog-upload-header-content-type",
+            "application/octet-stream",
+        ))
+        .and(body_json(serde_json::json!({
+            "file": {
+                "displayName": "sample.bin"
+            }
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-goog-upload-url", session_url.as_str()),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Step 2: Upload raw bytes and finalize against the pre-authenticated `x-goog-upload-url`.
+    Mock::given(method("POST"))
+        .and(path("/upload/v1beta/files"))
+        .and(query_param("upload_id", "session-xyz-123"))
+        .and(header("content-length", payload.len().to_string().as_str()))
+        .and(header("x-goog-upload-offset", "0"))
+        .and(headers("x-goog-upload-command", vec!["upload", "finalize"]))
+        .and(body_bytes(payload.to_vec()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "file": {
+                "name": "files/bin-123",
+                "displayName": "sample.bin",
+                "mimeType": "application/octet-stream",
+                "sizeBytes": payload.len().to_string(),
+                "state": "PROCESSING",
+                "source": "UPLOADED",
+                "uri": "https://generativelanguage.googleapis.com/v1beta/files/bin-123"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let file = client
+        .upload_file(payload, "application/octet-stream", Some("sample.bin"))
+        .await?;
+
+    assert_eq!(file.name.as_deref(), Some("files/bin-123"));
+    assert_eq!(file.display_name.as_deref(), Some("sample.bin"));
+    assert_eq!(file.mime_type.as_deref(), Some("application/octet-stream"));
+    assert_eq!(file.size_bytes, Some(payload.len() as i64));
+    assert_eq!(file.state, Some(FileState::Processing));
+    assert_eq!(file.source, Some(FileSource::Uploaded));
+    assert_eq!(
+        file.uri.as_deref(),
+        Some("https://generativelanguage.googleapis.com/v1beta/files/bin-123")
+    );
+
+    // Ensure Step 2 sent the exact `upload, finalize` command header and did NOT send
+    // `x-goog-api-key` to the pre-authenticated session URL.
+    let received = mock_server
+        .received_requests()
+        .await
+        .ok_or("request recording should be enabled")?;
+    assert_eq!(received.len(), 2);
+    assert!(received[0].headers.contains_key("x-goog-api-key"));
+    assert!(!received[1].headers.contains_key("x-goog-api-key"));
+    assert_eq!(
+        received[1]
+            .headers
+            .get("x-goog-upload-command")
+            .and_then(|v| v.to_str().ok()),
+        Some("upload, finalize")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_file_without_display_name_sends_empty_metadata_object() -> Result<()> {
+    let mock_server = MockServer::start().await;
+    let payload: &[u8] = b"Poem without display name";
+    let session_url = format!("{}/upload-session/1", mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/upload/files"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(header("x-goog-upload-protocol", "resumable"))
+        .and(header("x-goog-upload-command", "start"))
+        .and(header("x-goog-upload-header-content-type", "text/plain"))
+        .and(body_json(serde_json::json!({})))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("X-Goog-Upload-URL", session_url.as_str()),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/upload-session/1"))
+        .and(header("x-goog-upload-offset", "0"))
+        .and(headers("x-goog-upload-command", vec!["upload", "finalize"]))
+        .and(body_bytes(payload.to_vec()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "file": {
+                "name": "files/generated-id",
+                "mimeType": "text/plain",
+                "state": "ACTIVE"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let file = client.upload_file(payload, "text/plain", None).await?;
+    assert_eq!(file.name.as_deref(), Some("files/generated-id"));
+    assert_eq!(file.state, Some(FileState::Active));
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_file_with_metadata_normalizes_unprefixed_name_and_uses_versioned_upload_path()
+-> Result<()> {
+    let mock_server = MockServer::start().await;
+    let payload: &[u8] = b"# Markdown Spec";
+    let session_url = format!(
+        "{}/upload/v1beta/files?upload_id=custom-meta-1",
+        mock_server.uri()
+    );
+
+    Mock::given(method("POST"))
+        .and(path("/upload/v1beta/files"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(header("x-goog-upload-protocol", "resumable"))
+        .and(header("x-goog-upload-command", "start"))
+        .and(header("x-goog-upload-header-content-type", "text/markdown"))
+        .and(body_json(serde_json::json!({
+            "file": {
+                "name": "files/custom-spec-id",
+                "displayName": "Spec.md"
+            }
+        })))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-goog-upload-url", session_url.as_str()),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/upload/v1beta/files"))
+        .and(query_param("upload_id", "custom-meta-1"))
+        .and(header("x-goog-upload-offset", "0"))
+        .and(headers("x-goog-upload-command", vec!["upload", "finalize"]))
+        .and(body_bytes(payload.to_vec()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "file": {
+                "name": "files/custom-spec-id",
+                "displayName": "Spec.md",
+                "mimeType": "text/markdown",
+                "state": "ACTIVE"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let metadata = File::builder()
+        .name("custom-spec-id")
+        .display_name("Spec.md")
+        .build();
+    let file = client
+        .upload_file_with_metadata(payload, "text/markdown", &metadata)
+        .await?;
+
+    assert_eq!(file.name.as_deref(), Some("files/custom-spec-id"));
+    assert_eq!(file.display_name.as_deref(), Some("Spec.md"));
+    assert_eq!(file.state, Some(FileState::Active));
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_file_returns_api_error_when_upload_url_header_is_missing() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/upload/files"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("missing header"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let err = client
+        .upload_file(b"abc", "text/plain", None)
+        .await
+        .err()
+        .ok_or("expected missing upload header error")?;
+
+    match err {
+        GeminiError::ApiError { status, body } => {
+            assert_eq!(status, reqwest::StatusCode::OK);
+            assert!(body.contains("x-goog-upload-url"));
+        }
+        other => panic!("expected ApiError, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn upload_file_maps_structured_gemini_error_on_initiation() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/upload/files"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {
+                "code": 400,
+                "message": "Invalid file resource name.",
+                "status": "INVALID_ARGUMENT"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let metadata = File::builder().name("files/-invalid-").build();
+    let err = client
+        .upload_file_with_metadata(b"abc", "text/plain", &metadata)
+        .await
+        .err()
+        .ok_or("expected 400 error")?;
+
+    match err {
+        GeminiError::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 400);
+            assert_eq!(vertex_err.status, "INVALID_ARGUMENT");
+        }
+        other => panic!("expected VertexError, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn files_end_to_end_upload_poll_generate_and_delete_lifecycle() -> Result<()> {
+    let mock_server = MockServer::start().await;
+    let payload: &[u8] = b"Pedra da Mina: 2,798m";
+    let session_url = format!("{}/upload/v1beta/files?upload_id=e2e-1", mock_server.uri());
+    let file_uri = "https://generativelanguage.googleapis.com/v1beta/files/notes-e2e";
+
+    // 1a. Initiate resumable upload.
+    Mock::given(method("POST"))
+        .and(path("/upload/v1beta/files"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(header("x-goog-upload-protocol", "resumable"))
+        .and(header("x-goog-upload-command", "start"))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-goog-upload-url", session_url.as_str()),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 1b. Finalize upload -> initially `PROCESSING`.
+    Mock::given(method("POST"))
+        .and(path("/upload/v1beta/files"))
+        .and(query_param("upload_id", "e2e-1"))
+        .and(headers("x-goog-upload-command", vec!["upload", "finalize"]))
+        .and(body_bytes(payload.to_vec()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "file": {
+                "name": "files/notes-e2e",
+                "displayName": "notes.txt",
+                "mimeType": "text/plain",
+                "sizeBytes": payload.len().to_string(),
+                "state": "PROCESSING",
+                "uri": file_uri
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 2. Poll `get_file` -> transitions to `ACTIVE`.
+    Mock::given(method("GET"))
+        .and(path("/v1beta/files/notes-e2e"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "files/notes-e2e",
+            "displayName": "notes.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": payload.len().to_string(),
+            "state": "ACTIVE",
+            "uri": file_uri
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 3. Reference `fileData` in `generate_content`.
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-2.5-flash:generateContent"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(body_json(serde_json::json!({
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {
+                        "fileData": {
+                            "fileUri": file_uri,
+                            "mimeType": "text/plain"
+                        }
+                    },
+                    {
+                        "text": "What is the elevation?"
+                    }
+                ]
+            }]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "candidates": [{
+                "index": 0,
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "2,798 meters."}]
+                }
+            }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 4. Delete the file.
+    Mock::given(method("DELETE"))
+        .and(path("/v1beta/files/notes-e2e"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let mut file = client
+        .upload_file(payload, "text/plain", Some("notes.txt"))
+        .await?;
+    assert_eq!(file.state, Some(FileState::Processing));
+    let file_name = file.name.clone().ok_or("expected file name")?;
+
+    while file.state != Some(FileState::Active) {
+        file = client.get_file(&file_name).await?;
+    }
+
+    let file_part = Part {
+        thought: None,
+        thought_signature: None,
+        part_metadata: None,
+        media_resolution: None,
+        video_metadata: None,
+        speech_metadata: None,
+        data: PartData::FileData(serde_json::json!({
+            "fileUri": file.uri.as_deref().ok_or("expected uri")?,
+            "mimeType": file.mime_type.as_deref().ok_or("expected mimeType")?
+        })),
+    };
+    let request = GenerateContentRequest::builder()
+        .contents(vec![
+            Content::builder()
+                .role(Role::User)
+                .add_part(file_part)
+                .add_text_part("What is the elevation?")
+                .build(),
+        ])
+        .build();
+
+    let response = client
+        .generate_content(&request, "gemini-2.5-flash")
+        .await?;
+    assert_eq!(
+        response
+            .candidates
+            .first()
+            .and_then(|c| c.get_text())
+            .as_deref(),
+        Some("2,798 meters.")
+    );
+
+    client.delete_file(&file_name).await?;
     Ok(())
 }
