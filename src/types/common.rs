@@ -272,9 +272,6 @@ pub enum PartData {
     ToolCall(ToolCall),
     /// The result of a server-side tool invocation. See <https://ai.google.dev/api/caching#ToolResponse>.
     ToolResponse(ToolResponse),
-    /// An unrecognized part kind preserved as raw JSON.
-    #[serde(untagged)]
-    Unknown(Value),
 }
 
 impl Part {
@@ -297,8 +294,8 @@ mod test {
     use serde_json::json;
 
     use crate::types::{
-        AudioTranscription, Content, GenerateContentResponseResult, Part, PartData, Role,
-        SpeechMetadata, ToolCall, ToolResponse, VideoMetadata,
+        AudioTranscription, Content, Part, PartData, Role, SpeechMetadata, ToolCall, ToolResponse,
+        VideoMetadata,
     };
 
     fn part(data: PartData) -> Part {
@@ -673,58 +670,21 @@ mod test {
     }
 
     #[test]
-    fn response_with_unknown_part_kind_parses_and_preserves_other_parts() -> serde_json::Result<()>
-    {
+    fn unrecognized_part_kind_fails_deserialization() {
         let input = json!({
-            "candidates": [{
-                "index": 0,
-                "finishReason": "STOP",
-                "content": {
-                    "role": "model",
-                    "parts": [
-                        { "text": "Before unknown part." },
-                        {
-                            "thought": true,
-                            "futurePart": { "nested": [1, 2, 3] }
-                        },
-                        { "text": "After unknown part." }
-                    ]
-                }
-            }]
+            "futurePart": { "nested": [1, 2, 3] }
         });
+        assert!(serde_json::from_value::<Part>(input).is_err());
+    }
 
-        let response: GenerateContentResponseResult = serde_json::from_value(input)?;
-        let candidate = &response.candidates[0];
-        assert_eq!(
-            candidate.get_text().as_deref(),
-            Some("Before unknown part.After unknown part.")
-        );
-
-        let parts = candidate
-            .content
-            .as_ref()
-            .and_then(|c| c.parts.as_ref())
-            .expect("parts should be present");
-        assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0], Part::from_text("Before unknown part."));
-        assert_eq!(
-            parts[1],
-            Part {
-                thought: Some(true),
-                ..part(PartData::Unknown(
-                    json!({ "futurePart": { "nested": [1, 2, 3] } })
-                ))
+    #[test]
+    fn malformed_part_data_fails_deserialization() {
+        // A functionCall missing its required "name" must fail deserialization rather than being silently ignored.
+        let input = json!({
+            "functionCall": {
+                "args": { "city": "Lisbon" }
             }
-        );
-        assert_eq!(parts[2], Part::from_text("After unknown part."));
-
-        assert_eq!(
-            serde_json::to_value(&parts[1])?,
-            json!({
-                "thought": true,
-                "futurePart": { "nested": [1, 2, 3] }
-            })
-        );
-        Ok(())
+        });
+        assert!(serde_json::from_value::<Part>(input).is_err());
     }
 }
