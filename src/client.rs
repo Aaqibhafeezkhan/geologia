@@ -385,7 +385,7 @@ impl GeminiClient {
             query_params.push(format!("pageSize={size}"));
         }
         if let Some(token) = page_token {
-            query_params.push(format!("pageToken={token}"));
+            query_params.push(format!("pageToken={}", encode_query_value(token)));
         }
         if !query_params.is_empty() {
             endpoint_url.push('?');

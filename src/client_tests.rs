@@ -834,3 +834,45 @@ async fn get_model_maps_not_found_error() -> Result<()> {
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn list_cached_contents_against_mock_server_with_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/cachedContents"))
+        .and(query_param("pageSize", "5"))
+        .and(query_param("pageToken", "tok+1/2=="))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "cachedContents": [
+                {
+                    "name": "cachedContents/abc123xyz",
+                    "model": "models/gemini-2.5-flash",
+                    "displayName": "Test Cache"
+                }
+            ],
+            "nextPageToken": "next-cache-tok=="
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let response = client
+        .list_cached_contents(Some(5), Some("tok+1/2=="))
+        .await?;
+    assert_eq!(response.cached_contents.len(), 1);
+    assert_eq!(
+        response.cached_contents[0].name.as_deref(),
+        Some("cachedContents/abc123xyz")
+    );
+    assert_eq!(
+        response.next_page_token.as_deref(),
+        Some("next-cache-tok==")
+    );
+    Ok(())
+}
