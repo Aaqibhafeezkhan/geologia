@@ -96,6 +96,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 thought_signature: None,
                 part_metadata: None,
                 media_resolution: None,
+                video_metadata: None,
+                speech_metadata: None,
                 data: PartData::FunctionResponse(function_response),
             }]),
         });

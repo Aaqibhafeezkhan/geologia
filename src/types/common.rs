@@ -114,7 +114,7 @@ impl FromStr for Role {
 /// A single unit of content within a [`Content`] message.
 ///
 /// See <https://ai.google.dev/api/caching#Part>.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Part {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -127,14 +127,126 @@ pub struct Part {
     pub part_metadata: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media_resolution: Option<Value>, // TODO: Create type for media_resolution.
+    /// Metadata for a video part (clipping offsets and frame rate).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_metadata: Option<VideoMetadata>,
+    /// Metadata for a text part used in speech synthesis (speaker and style).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speech_metadata: Option<SpeechMetadata>,
     #[serde(flatten)]
     pub data: PartData, // Create enum for data.
+}
+
+/// Metadata describing how a video [`Part`] should be clipped or sampled.
+///
+/// See <https://ai.google.dev/api/caching#VideoMetadata>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoMetadata {
+    /// Optional start offset of the video segment (e.g. `"0s"` or `"10.5s"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_offset: Option<String>,
+    /// Optional end offset of the video segment (e.g. `"60s"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_offset: Option<String>,
+    /// Optional frame rate of the video sent to the model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fps: Option<f64>,
+}
+
+/// Metadata describing speaker identity and vocal style for a text [`Part`] during speech synthesis.
+///
+/// See <https://ai.google.dev/api/caching#SpeechMetadata>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechMetadata {
+    /// Optional speaker identifier matching a configured speaker voice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    /// Optional natural-language description of the vocal style or delivery tone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+}
+
+/// Information about a single recognized word within an [`AudioTranscription`].
+///
+/// See <https://ai.google.dev/api/caching#WordInfo>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WordInfo {
+    /// Transcript of the word.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word: Option<String>,
+    /// Optional start offset in time of the word relative to the start of the audio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_offset: Option<String>,
+    /// Optional end offset in time of the word relative to the start of the audio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_offset: Option<String>,
+}
+
+/// Transcription of an audio segment returned by the model.
+///
+/// See <https://ai.google.dev/api/caching#AudioTranscription>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioTranscription {
+    /// The transcribed text of the audio segment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Optional label identifying the speaker of the audio segment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_label: Option<String>,
+    /// Optional word-level transcription and timing metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<WordInfo>>,
+}
+
+/// A server-side tool call predicted by the model.
+///
+/// Returned when [`ToolConfig::include_server_side_tool_invocations`](crate::types::ToolConfig::include_server_side_tool_invocations) is enabled.
+///
+/// See <https://ai.google.dev/api/caching#ToolCall>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCall {
+    /// Optional unique identifier for the tool call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Optional name of the tool being called.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    /// The type of tool being invoked (e.g. `"GOOGLE_SEARCH_WEB"`, `"URL_CONTEXT"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_type: Option<String>,
+    /// Optional arguments passed to the tool, as a JSON object.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<Value>,
+}
+
+/// The result of a server-side tool invocation.
+///
+/// Returned when [`ToolConfig::include_server_side_tool_invocations`](crate::types::ToolConfig::include_server_side_tool_invocations) is enabled.
+///
+/// See <https://ai.google.dev/api/caching#ToolResponse>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolResponse {
+    /// Optional unique identifier matching the corresponding [`ToolCall::id`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The type of tool that was called (e.g. `"GOOGLE_SEARCH_WEB"`, `"URL_CONTEXT"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_type: Option<String>,
+    /// Optional output returned by the tool execution, as a JSON object.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<Value>,
 }
 
 /// The payload of a [`Part`], representing different content types.
 ///
 /// See <https://ai.google.dev/api/caching#Part>.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum PartData {
     /// Plain text content.
@@ -169,6 +281,14 @@ pub enum PartData {
     ExecutableCode(Value),
     /// The result of executing code.
     CodeExecutionResult(Value),
+    /// Transcription of an audio segment. See <https://ai.google.dev/api/caching#AudioTranscription>.
+    AudioTranscription(AudioTranscription),
+    /// Media processing details for a part.
+    MediaProcessing(Value),
+    /// A server-side tool call predicted by the model. See <https://ai.google.dev/api/caching#ToolCall>.
+    ToolCall(ToolCall),
+    /// The result of a server-side tool invocation. See <https://ai.google.dev/api/caching#ToolResponse>.
+    ToolResponse(ToolResponse),
 }
 
 impl Part {
@@ -179,6 +299,8 @@ impl Part {
             thought_signature: None,
             part_metadata: None,
             media_resolution: None,
+            video_metadata: None,
+            speech_metadata: None,
             data: PartData::Text(text.into()),
         }
     }
@@ -188,7 +310,10 @@ impl Part {
 mod test {
     use serde_json::json;
 
-    use crate::types::{Content, Part, PartData, Role};
+    use crate::types::{
+        AudioTranscription, Content, Part, PartData, Role, SpeechMetadata, ToolCall, ToolResponse,
+        VideoMetadata, WordInfo,
+    };
 
     fn part(data: PartData) -> Part {
         Part {
@@ -196,6 +321,8 @@ mod test {
             thought_signature: None,
             part_metadata: None,
             media_resolution: None,
+            video_metadata: None,
+            speech_metadata: None,
             data,
         }
     }
@@ -399,5 +526,191 @@ mod test {
         }"#;
 
         let _ = serde_json::from_str::<Part>(input).unwrap();
+    }
+
+    #[test]
+    fn video_metadata_and_speech_metadata_round_trip_on_part() -> serde_json::Result<()> {
+        let video_part = Part {
+            video_metadata: Some(VideoMetadata {
+                start_offset: Some("0s".to_string()),
+                end_offset: Some("60s".to_string()),
+                fps: Some(2.0),
+            }),
+            ..part(PartData::FileData(json!({
+                "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/video123",
+                "mimeType": "video/mp4"
+            })))
+        };
+
+        let video_json = serde_json::to_value(&video_part)?;
+        assert_eq!(
+            video_json,
+            json!({
+                "fileData": {
+                    "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/video123",
+                    "mimeType": "video/mp4"
+                },
+                "videoMetadata": {
+                    "startOffset": "0s",
+                    "endOffset": "60s",
+                    "fps": 2.0
+                }
+            })
+        );
+        assert_eq!(serde_json::from_value::<Part>(video_json)?, video_part);
+
+        let speech_part = Part {
+            speech_metadata: Some(SpeechMetadata {
+                speaker: Some("Joe".to_string()),
+                style: Some("cheerful and friendly".to_string()),
+            }),
+            ..Part::from_text("How's it going today?")
+        };
+
+        let speech_json = serde_json::to_value(&speech_part)?;
+        assert_eq!(
+            speech_json,
+            json!({
+                "text": "How's it going today?",
+                "speechMetadata": {
+                    "speaker": "Joe",
+                    "style": "cheerful and friendly"
+                }
+            })
+        );
+        assert_eq!(serde_json::from_value::<Part>(speech_json)?, speech_part);
+
+        assert_eq!(serde_json::to_value(VideoMetadata::default())?, json!({}));
+        assert_eq!(serde_json::to_value(SpeechMetadata::default())?, json!({}));
+        Ok(())
+    }
+
+    #[test]
+    fn audio_transcription_and_media_processing_round_trip() -> serde_json::Result<()> {
+        let transcription_part = part(PartData::AudioTranscription(AudioTranscription {
+            text: Some("Hello world".to_string()),
+            speaker_label: Some("spk_1".to_string()),
+            words: Some(vec![
+                WordInfo {
+                    word: Some("Hello".to_string()),
+                    start_offset: Some("0.100s".to_string()),
+                    end_offset: Some("0.400s".to_string()),
+                },
+                WordInfo {
+                    word: Some("world".to_string()),
+                    start_offset: Some("0.500s".to_string()),
+                    end_offset: Some("0.900s".to_string()),
+                },
+            ]),
+        }));
+
+        let transcription_json = serde_json::to_value(&transcription_part)?;
+        assert_eq!(
+            transcription_json,
+            json!({
+                "audioTranscription": {
+                    "text": "Hello world",
+                    "speakerLabel": "spk_1",
+                    "words": [
+                        { "word": "Hello", "startOffset": "0.100s", "endOffset": "0.400s" },
+                        { "word": "world", "startOffset": "0.500s", "endOffset": "0.900s" }
+                    ]
+                }
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<Part>(transcription_json)?,
+            transcription_part
+        );
+        assert_eq!(
+            serde_json::to_value(AudioTranscription::default())?,
+            json!({})
+        );
+        assert_eq!(serde_json::to_value(WordInfo::default())?, json!({}));
+
+        let media_processing_part = part(PartData::MediaProcessing(json!({
+            "mode": "AGENTIC"
+        })));
+
+        let media_processing_json = serde_json::to_value(&media_processing_part)?;
+        assert_eq!(
+            media_processing_json,
+            json!({
+                "mediaProcessing": {
+                    "mode": "AGENTIC"
+                }
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<Part>(media_processing_json)?,
+            media_processing_part
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tool_call_and_tool_response_parse_and_round_trip() -> serde_json::Result<()> {
+        let call_json = json!({
+            "toolCall": {
+                "id": "tool-call-1",
+                "toolName": "google_search",
+                "toolType": "GOOGLE_SEARCH_WEB",
+                "args": { "query": "rust serde flatten enum" }
+            }
+        });
+
+        let call_part: Part = serde_json::from_value(call_json.clone())?;
+        assert_eq!(
+            call_part,
+            part(PartData::ToolCall(ToolCall {
+                id: Some("tool-call-1".to_string()),
+                tool_name: Some("google_search".to_string()),
+                tool_type: Some("GOOGLE_SEARCH_WEB".to_string()),
+                args: Some(json!({ "query": "rust serde flatten enum" })),
+            }))
+        );
+        assert_eq!(serde_json::to_value(&call_part)?, call_json);
+
+        let response_json = json!({
+            "toolResponse": {
+                "id": "tool-call-1",
+                "toolType": "GOOGLE_SEARCH_WEB",
+                "response": { "results": [{ "title": "Serde" }] }
+            }
+        });
+
+        let response_part: Part = serde_json::from_value(response_json.clone())?;
+        assert_eq!(
+            response_part,
+            part(PartData::ToolResponse(ToolResponse {
+                id: Some("tool-call-1".to_string()),
+                tool_type: Some("GOOGLE_SEARCH_WEB".to_string()),
+                response: Some(json!({ "results": [{ "title": "Serde" }] })),
+            }))
+        );
+        assert_eq!(serde_json::to_value(&response_part)?, response_json);
+
+        assert_eq!(serde_json::to_value(ToolCall::default())?, json!({}));
+        assert_eq!(serde_json::to_value(ToolResponse::default())?, json!({}));
+        Ok(())
+    }
+
+    #[test]
+    fn unrecognized_part_kind_fails_deserialization() {
+        let input = json!({
+            "futurePart": { "nested": [1, 2, 3] }
+        });
+        assert!(serde_json::from_value::<Part>(input).is_err());
+    }
+
+    #[test]
+    fn malformed_part_data_fails_deserialization() {
+        // A functionCall missing its required "name" must fail deserialization rather than being silently ignored.
+        let input = json!({
+            "functionCall": {
+                "args": { "city": "Lisbon" }
+            }
+        });
+        assert!(serde_json::from_value::<Part>(input).is_err());
     }
 }
