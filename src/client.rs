@@ -15,8 +15,8 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1
 /// Async client for the Google Gemini API.
 ///
 /// Provides methods for model discovery, content generation, streaming, token counting,
-/// text embeddings, image prediction, and context caching. All requests are authenticated
-/// with an API key passed at construction time.
+/// text embeddings, image prediction, context caching, and file management. All requests are
+/// authenticated with an API key passed at construction time.
 ///
 /// Use [`GeminiClient::builder`] for advanced configuration, such as pointing at a mock
 /// server or sharing a configured [`reqwest::Client`].
@@ -556,6 +556,110 @@ impl GeminiClient {
                 Err(e.into())
             }
         }
+    }
+
+    /// Retrieves metadata for an uploaded or generated [`File`] by name or ID.
+    ///
+    /// `name` can be either the full resource name (e.g. `files/abc-123`)
+    /// or just the file ID (e.g. `abc-123`).
+    ///
+    /// Newly uploaded files are processed asynchronously (`Processing` -> `Active` or `Failed`).
+    /// Poll `get_file` until [`File::state`] is `Some(`[`FileState::Active`]`)` before referencing
+    /// [`File::uri`] in a `generateContent` request.
+    ///
+    /// See <https://ai.google.dev/api/files#method:-files.get>.
+    pub async fn get_file(&self, name: &str) -> GeminiResult<File> {
+        let endpoint_url = self.file_resource_url(name);
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("get_file response: {:?}", txt_json);
+
+        match serde_json::from_str::<File>(&txt_json) {
+            Ok(file) => Ok(file),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Lists [`File`]s owned by the requesting project, with optional pagination.
+    ///
+    /// If `page_size` is `None`, the API returns 10 files per page by default (maximum 100).
+    /// Pass `next_page_token` from a previous [`ListFilesResponse`] as `page_token` to retrieve
+    /// the next page.
+    ///
+    /// See <https://ai.google.dev/api/files#method:-files.list>.
+    pub async fn list_files(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> GeminiResult<ListFilesResponse> {
+        let mut endpoint_url = self.endpoint_url("files");
+        let mut query_params = Vec::new();
+        if let Some(size) = page_size {
+            query_params.push(format!("pageSize={size}"));
+        }
+        if let Some(token) = page_token {
+            query_params.push(format!("pageToken={}", encode_query_value(token)));
+        }
+        if !query_params.is_empty() {
+            endpoint_url.push('?');
+            endpoint_url.push_str(&query_params.join("&"));
+        }
+
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("list_files response: {:?}", txt_json);
+
+        match serde_json::from_str::<ListFilesResponse>(&txt_json) {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Deletes an existing [`File`] resource by name or ID.
+    ///
+    /// `name` can be either the full resource name (e.g. `files/abc-123`)
+    /// or just the file ID (e.g. `abc-123`).
+    ///
+    /// See <https://ai.google.dev/api/files#method:-files.delete>.
+    pub async fn delete_file(&self, name: &str) -> GeminiResult<()> {
+        let endpoint_url = self.file_resource_url(name);
+        let resp = self
+            .client
+            .delete(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let _ = Self::error_for_status(resp).await?;
+        Ok(())
+    }
+
+    fn file_resource_url(&self, name: &str) -> String {
+        let path = if name.starts_with("files/") {
+            name.to_string()
+        } else {
+            format!("files/{name}")
+        };
+        self.endpoint_url(&path)
     }
 
     fn model_resource_url(&self, name: &str) -> String {
