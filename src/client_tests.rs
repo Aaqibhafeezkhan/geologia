@@ -58,6 +58,14 @@ fn resource_url_handles_prefixed_and_unprefixed_names() {
         client.file_resource_url("clip-123abc"),
         "https://generativelanguage.googleapis.com/v1beta/files/clip-123abc"
     );
+    assert_eq!(
+        client.batch_resource_url("batches/batch-123"),
+        "https://generativelanguage.googleapis.com/v1beta/batches/batch-123"
+    );
+    assert_eq!(
+        client.batch_resource_url("batch-123"),
+        "https://generativelanguage.googleapis.com/v1beta/batches/batch-123"
+    );
 }
 
 #[test]
@@ -1889,5 +1897,273 @@ async fn get_batch_maps_not_found_error() -> Result<()> {
         }
         other => panic!("expected VertexError, got: {other:?}"),
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_batches_against_mock_server_without_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/batches"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "operations": [
+                {
+                    "name": "batches/batch-1",
+                    "metadata": {
+                        "name": "batches/batch-1",
+                        "model": "models/gemini-2.5-flash",
+                        "displayName": "batch-one",
+                        "state": "BATCH_STATE_SUCCEEDED"
+                    },
+                    "done": true
+                },
+                {
+                    "name": "batches/batch-2",
+                    "metadata": {
+                        "name": "batches/batch-2",
+                        "model": "models/gemini-2.5-flash",
+                        "displayName": "batch-two",
+                        "state": "BATCH_STATE_RUNNING"
+                    },
+                    "done": false
+                }
+            ],
+            "nextPageToken": "token-page-2"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let resp = client.list_batches(None, None).await?;
+    assert_eq!(resp.operations.len(), 2);
+    assert_eq!(resp.next_page_token.as_deref(), Some("token-page-2"));
+
+    let display_names: Vec<&str> = resp
+        .batches()
+        .filter_map(|b| b.display_name.as_deref())
+        .collect();
+    assert_eq!(display_names, vec!["batch-one", "batch-two"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_batches_against_mock_server_with_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1beta/batches"))
+        .and(query_param("pageSize", "10"))
+        .and(query_param("pageToken", "page/cursor 123"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "operations": [],
+            "nextPageToken": null
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let resp = client
+        .list_batches(Some(10), Some("page/cursor 123"))
+        .await?;
+    assert!(resp.operations.is_empty());
+    assert!(resp.next_page_token.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_batch_against_mock_server_handles_prefixed_and_unprefixed_name() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/batches/batch-cancel-1:cancel"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(body_json(serde_json::json!({})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    // 1. Prefixed
+    client.cancel_batch("batches/batch-cancel-1").await?;
+
+    // 2. Unprefixed
+    client.cancel_batch("batch-cancel-1").await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_batch_against_mock_server_handles_prefixed_and_unprefixed_name() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/v1beta/batches/batch-del-1"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    // 1. Prefixed
+    client.delete_batch("batches/batch-del-1").await?;
+
+    // 2. Unprefixed
+    client.delete_batch("batch-del-1").await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_batch_maps_structured_gemini_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1beta/batches/batch-done:cancel"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {
+                "code": 400,
+                "message": "Cannot cancel completed batch",
+                "status": "FAILED_PRECONDITION"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let err = client.cancel_batch("batch-done").await.unwrap_err();
+    match err {
+        crate::error::Error::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 400);
+            assert_eq!(vertex_err.status, "FAILED_PRECONDITION");
+            assert!(vertex_err.message.contains("Cannot cancel completed batch"));
+        }
+        other => panic!("expected VertexError, got: {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_batch_maps_structured_gemini_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/v1beta/batches/nonexistent"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "error": {
+                "code": 404,
+                "message": "Batch not found: batches/nonexistent",
+                "status": "NOT_FOUND"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let err = client.delete_batch("nonexistent").await.unwrap_err();
+    match err {
+        crate::error::Error::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 404);
+            assert_eq!(vertex_err.status, "NOT_FOUND");
+        }
+        other => panic!("expected VertexError, got: {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_end_to_end_create_poll_cancel_delete_lifecycle() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    // 1. Create batch
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-2.5-flash:batchGenerateContent"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "batches/lifecycle-123",
+            "metadata": {
+                "name": "batches/lifecycle-123",
+                "state": "BATCH_STATE_PENDING"
+            },
+            "done": false
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 2. Poll: running
+    Mock::given(method("GET"))
+        .and(path("/v1beta/batches/lifecycle-123"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "batches/lifecycle-123",
+            "metadata": {
+                "name": "batches/lifecycle-123",
+                "state": "BATCH_STATE_RUNNING"
+            },
+            "done": false
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 3. Cancel
+    Mock::given(method("POST"))
+        .and(path("/v1beta/batches/lifecycle-123:cancel"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 4. Delete
+    Mock::given(method("DELETE"))
+        .and(path("/v1beta/batches/lifecycle-123"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(format!("{}/v1beta", mock_server.uri()))
+        .build();
+
+    let request = BatchGenerateContentRequest::new(GenerateContentBatch::default());
+    let op = client
+        .batch_generate_content(&request, "gemini-2.5-flash")
+        .await?;
+    let batch_name = op.name.as_deref().expect("name");
+    assert_eq!(op.state(), Some(BatchState::Pending));
+
+    let polled = client.get_batch(batch_name).await?;
+    assert_eq!(polled.state(), Some(BatchState::Running));
+
+    client.cancel_batch(batch_name).await?;
+    client.delete_batch(batch_name).await?;
     Ok(())
 }

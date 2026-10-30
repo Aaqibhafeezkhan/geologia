@@ -6,16 +6,18 @@ description: >
   apps that call Gemini models, generating text or images from Rust, using function calling with
   Gemini in Rust, or asking how to add AI features to a Rust project using the geologia crate.
   Also trigger when the user asks about listing or inspecting available Gemini models, uploading
-  or managing media files via the Gemini Files API, streaming Gemini responses, token counting,
-  text embeddings, or structured output in Rust — even if they don't explicitly mention geologia.
+  or managing media files via the Gemini Files API, asynchronous batch generation via the Gemini
+  Batch API, streaming Gemini responses, token counting, text embeddings, or structured output in
+  Rust — even if they don't explicitly mention geologia.
 ---
 
 # geologia
 
 `geologia` is an async Rust client for Google's Generative AI API (Gemini). It supports model
 discovery (`models.list` and `models.get`), media file management (`files` / `media.upload`),
-text generation (including streaming), token counting, text embeddings, image generation (Imagen),
-context caching, and function calling.
+asynchronous batch generation (`batches` / `batchGenerateContent`), text generation (including
+streaming), token counting, text embeddings, image generation (Imagen), context caching, and
+function calling.
 
 ## Adding the dependency
 
@@ -521,6 +523,80 @@ Other client methods:
 - `client.delete_file(name)`: delete an uploaded file immediately.
 
 See `examples/files.rs` for a runnable version.
+
+---
+
+## Batch generation (Batch API)
+
+Process large volumes of content generation requests asynchronously at reduced cost via the Gemini Batch API.
+Batches can be submitted with inlined requests (recommended for total payload sizes < 20MB) or by referencing
+a JSONL file previously uploaded with the Files API:
+
+```rust
+use std::time::Duration;
+use geologia::prelude::{
+    BatchGenerateContentRequest, BatchState, Content, GeminiClient, GenerateContentBatch,
+    GenerateContentRequest, InputConfig, Role,
+};
+
+let client = GeminiClient::new(std::env::var("GEMINI_API_KEY")?);
+
+// 1. Prepare inline requests
+let request1 = GenerateContentRequest::builder()
+    .contents(vec![
+        Content::builder()
+            .role(Role::User)
+            .add_text_part("Explain photosynthesis in one concise sentence.")
+            .build(),
+    ])
+    .build();
+
+let request2 = GenerateContentRequest::builder()
+    .contents(vec![
+        Content::builder()
+            .role(Role::User)
+            .add_text_part("Explain cellular respiration in one concise sentence.")
+            .build(),
+    ])
+    .build();
+
+let batch = BatchGenerateContentRequest::new(
+    GenerateContentBatch::builder()
+        .display_name("biology-comparison-batch")
+        .input_config(InputConfig::from_inline(vec![request1, request2]))
+        .build(),
+);
+
+// 2. Submit the batch via `POST models/{model}:batchGenerateContent`
+let initial_op = client.batch_generate_content(&batch, "gemini-2.5-flash").await?;
+let batch_name = initial_op.name.as_deref().unwrap();
+
+// 3. Poll get_batch until complete (`BatchState::Succeeded`, `Failed`, or `Cancelled`)
+let mut op = initial_op;
+while !op.is_done() {
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    op = client.get_batch(batch_name).await?;
+}
+
+// 4. Inspect results
+if let Some(responses) = op.inlined_responses() {
+    for resp in responses {
+        if let Some(result) = resp.result() {
+            println!("Output: {}", result.candidates[0].get_text().unwrap());
+        }
+    }
+}
+
+// 5. Clean up the batch resource
+client.delete_batch(batch_name).await?;
+```
+
+Other batch methods:
+- `client.list_batches(page_size, page_token)`: paginated listing of batch operations.
+- `client.cancel_batch(name)`: cancel an in-progress batch job.
+- `client.delete_batch(name)`: delete a batch resource by name (`batches/abc-123`) or bare ID.
+
+See `examples/batch.rs` for a runnable version.
 
 ---
 
