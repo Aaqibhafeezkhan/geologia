@@ -558,6 +558,176 @@ impl GeminiClient {
         }
     }
 
+    /// Uploads raw bytes to the Gemini Files API (`POST /upload/v1beta/files`) using the
+    /// two-step resumable upload protocol and returns the created [`File`].
+    ///
+    /// Pass an optional human-readable `display_name` (up to 512 characters). To also specify a
+    /// custom resource ID (`files/{id}`), use
+    /// [`upload_file_with_metadata`](Self::upload_file_with_metadata).
+    ///
+    /// # Buffering
+    ///
+    /// `data` is copied into an in-memory request body and sent in a single `upload, finalize`
+    /// HTTP request (without multi-chunk streaming or resume retries). Callers should ensure the
+    /// payload fits comfortably in memory.
+    ///
+    /// # Asynchronous processing
+    ///
+    /// Uploaded files (especially video, audio, and large documents) are processed asynchronously
+    /// after the upload finishes: the returned [`File`] may initially report
+    /// [`FileState::Processing`] and later transition to [`FileState::Active`] (or
+    /// [`FileState::Failed`], populating [`File::error`]). Callers **must** wait until
+    /// [`File::state`] is `Some(`[`FileState::Active`]`)` (by polling [`get_file`](Self::get_file))
+    /// before referencing [`File::uri`] in a `generateContent` request.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use geologia::prelude::*;
+    ///
+    /// # async fn run() -> core::result::Result<(), Box<dyn std::error::Error>> {
+    /// let client = GeminiClient::new("YOUR_API_KEY".into());
+    /// let mut file = client
+    ///     .upload_file(b"Hello from Files API!", "text/plain", Some("greeting.txt"))
+    ///     .await?;
+    /// let file_name = file.name.clone().ok_or("missing file name")?;
+    ///
+    /// while file.state != Some(FileState::Active) {
+    ///     if file.state == Some(FileState::Failed) {
+    ///         return Err(format!("file processing failed: {:?}", file.error).into());
+    ///     }
+    ///     tokio::time::sleep(Duration::from_secs(2)).await;
+    ///     file = client.get_file(&file_name).await?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// See <https://ai.google.dev/api/files#method:-media.upload>.
+    pub async fn upload_file(
+        &self,
+        data: &[u8],
+        mime_type: &str,
+        display_name: Option<&str>,
+    ) -> GeminiResult<File> {
+        let metadata = display_name.map(|name| File::builder().display_name(name).build());
+        self.upload_file_internal(data, mime_type, metadata).await
+    }
+
+    /// Uploads raw bytes to the Gemini Files API (`POST /upload/v1beta/files`) with explicit
+    /// [`File`] metadata (such as a custom [`File::name`] and/or [`File::display_name`]).
+    ///
+    /// Only the writable create-time fields ([`File::name`] and [`File::display_name`]) are
+    /// forwarded in the initiation request; output-only fields on `file` are ignored. If
+    /// `file.name` is set without the `"files/"` prefix (e.g. `"my-doc-123"`), `"files/"` is
+    /// prepended automatically. An empty `file.name` (`""`) is treated as unset.
+    ///
+    /// `data` is copied into an in-memory request body and sent in a single `upload, finalize`
+    /// HTTP request.
+    ///
+    /// Uploaded files are processed asynchronously (`Processing` -> `Active` or `Failed`).
+    /// Callers **must** wait until [`File::state`] is `Some(`[`FileState::Active`]`)` (by polling
+    /// [`get_file`](Self::get_file)) before referencing [`File::uri`] in a `generateContent`
+    /// request.
+    ///
+    /// See <https://ai.google.dev/api/files#method:-media.upload>.
+    pub async fn upload_file_with_metadata(
+        &self,
+        data: &[u8],
+        mime_type: &str,
+        file: &File,
+    ) -> GeminiResult<File> {
+        let normalized_name = file.name.as_deref().and_then(|name| {
+            if name.is_empty() {
+                None
+            } else if name.starts_with("files/") {
+                Some(name.to_string())
+            } else {
+                Some(format!("files/{name}"))
+            }
+        });
+        let normalized = File {
+            name: normalized_name,
+            display_name: file.display_name.clone(),
+            ..Default::default()
+        };
+        self.upload_file_internal(data, mime_type, Some(normalized))
+            .await
+    }
+
+    async fn upload_file_internal(
+        &self,
+        data: &[u8],
+        mime_type: &str,
+        file: Option<File>,
+    ) -> GeminiResult<File> {
+        let start_url = self.upload_endpoint_url("files");
+        let num_bytes = data.len();
+        let create_request = CreateFileRequest { file };
+
+        // Step 1: Initiate a resumable upload session and read `x-goog-upload-url`.
+        let start_resp = self
+            .client
+            .post(&start_url)
+            .header("x-goog-api-key", &self.api_key)
+            .header("X-Goog-Upload-Protocol", "resumable")
+            .header("X-Goog-Upload-Command", "start")
+            .header("X-Goog-Upload-Header-Content-Length", num_bytes.to_string())
+            .header("X-Goog-Upload-Header-Content-Type", mime_type)
+            .json(&create_request)
+            .send()
+            .await?;
+        let start_resp = Self::error_for_status(start_resp).await?;
+
+        let upload_url = start_resp
+            .headers()
+            .get("x-goog-upload-url")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_owned);
+
+        let upload_url = match upload_url {
+            Some(url) => url,
+            None => {
+                let body = start_resp.text().await.unwrap_or_default();
+                let detail = if body.is_empty() {
+                    "Resumable upload initiation response missing x-goog-upload-url header"
+                        .to_string()
+                } else {
+                    format!(
+                        "Resumable upload initiation response missing x-goog-upload-url header: {body}"
+                    )
+                };
+                return Err(GeminiError::UnexpectedResponse { message: detail });
+            }
+        };
+
+        // Step 2: Upload the raw file bytes and finalize the pre-authenticated upload session.
+        let finalize_resp = self
+            .client
+            .post(&upload_url)
+            .header(reqwest::header::CONTENT_LENGTH, num_bytes)
+            .header("X-Goog-Upload-Offset", "0")
+            .header("X-Goog-Upload-Command", "upload, finalize")
+            .body(data.to_vec())
+            .send()
+            .await?;
+        let finalize_resp = Self::error_for_status(finalize_resp).await?;
+
+        let txt_json = finalize_resp.text().await?;
+        tracing::debug!("upload_file response: {:?}", txt_json);
+
+        match serde_json::from_str::<CreateFileResponse>(&txt_json) {
+            Ok(response) => Ok(response.file),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
     /// Retrieves metadata for an uploaded or generated [`File`] by name or ID.
     ///
     /// `name` can be either the full resource name (e.g. `files/abc-123`)
@@ -685,6 +855,46 @@ impl GeminiClient {
         let path = path.trim_start_matches('/');
         format!("{base}/{path}")
     }
+
+    /// Derives a media upload endpoint URL from the configured `base_url` by inserting `/upload`
+    /// before the API version segment when present (e.g.
+    /// `https://generativelanguage.googleapis.com/v1beta` ->
+    /// `https://generativelanguage.googleapis.com/upload/v1beta/{path}`), or appending `/upload`
+    /// to an unversioned base URL (e.g. `http://127.0.0.1:8080` ->
+    /// `http://127.0.0.1:8080/upload/{path}`).
+    fn upload_endpoint_url(&self, path: &str) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        let path = path.trim_start_matches('/');
+
+        let (origin, base_path) = match base.find("://") {
+            Some(scheme_sep) => {
+                let after_scheme = scheme_sep + 3;
+                match base[after_scheme..].find('/') {
+                    Some(rel_slash) => {
+                        let slash_idx = after_scheme + rel_slash;
+                        (&base[..slash_idx], &base[slash_idx..])
+                    }
+                    None => (base, ""),
+                }
+            }
+            None => ("", base),
+        };
+
+        if let Some((prefix, last_segment)) = base_path.rsplit_once('/')
+            && is_api_version_segment(last_segment)
+        {
+            format!("{origin}{prefix}/upload/{last_segment}/{path}")
+        } else {
+            format!("{origin}{base_path}/upload/{path}")
+        }
+    }
+}
+
+fn is_api_version_segment(segment: &str) -> bool {
+    let mut chars = segment.chars();
+    matches!(chars.next(), Some('v'))
+        && matches!(chars.next(), Some(c) if c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_alphanumeric())
 }
 
 fn encode_query_value(value: &str) -> String {
