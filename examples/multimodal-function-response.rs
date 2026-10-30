@@ -4,8 +4,8 @@
 use std::{env, error::Error};
 
 use geologia::prelude::{
-    Content, FunctionDeclaration, FunctionResponse, FunctionResponseBlob, FunctionResponseFileData,
-    FunctionResponsePart, GeminiClient, GenerateContentRequest, Part, PartData, Role, Tools,
+    Content, FunctionDeclaration, FunctionResponse, FunctionResponseBlob, FunctionResponsePart,
+    GeminiClient, GenerateContentRequest, Part, PartData, Role, Tools,
 };
 use serde_json::json;
 
@@ -37,9 +37,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let chart_function = FunctionDeclaration {
         name: String::from("generate_chart"),
-        description: String::from(
-            "Generates a chart and returns both inline image bytes and a file reference",
-        ),
+        description: String::from("Generates a chart and returns inline image bytes"),
         behavior: None,
         parameters: None,
         parameters_json_schema: Some(generate_chart_parameters),
@@ -70,31 +68,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("Received function call: {name}");
         contents.push(content.clone());
 
-        // Return a multimodal function response with an inline blob (e.g. chart image)
-        // and a file reference (e.g. raw CSV data), demonstrating the new displayName
-        // and fileData support.
-        let inline_image = FunctionResponseBlob::new("image/png", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
-            .with_display_name("revenue_chart.png");
-
-        // Demonstrates constructing a FunctionResponseFileData with displayName and mimeType.
-        // In real-world usage, file_uri points to a file uploaded via the Gemini Files API.
-        let _data_file = FunctionResponseFileData::new(
-            "https://generativelanguage.googleapis.com/v1beta/files/quarterly_revenue_data",
+        // Return a multimodal function response with an inline blob (e.g. chart image),
+        // demonstrating the displayName support on FunctionResponseBlob and FunctionResponsePart::InlineData.
+        // Note: FunctionResponsePart also supports FileData(FunctionResponseFileData) for URIs
+        // uploaded via the Gemini Files API.
+        let inline_image = FunctionResponseBlob::new(
+            "image/png",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
         )
-        .with_display_name("revenue_data.csv")
-        .with_mime_type("text/csv");
+        .with_display_name("revenue_chart.png");
 
-        // FunctionResponsePart supports both InlineData (inline media bytes) and FileData (URI references).
         let function_response = FunctionResponse {
             id: id.clone(),
             name: name.clone(),
             response: json!({
                 "chart": { "$ref": "revenue_chart.png" }
             }),
-            parts: Some(vec![
-                FunctionResponsePart::InlineData(inline_image),
-                // FunctionResponsePart::FileData(_data_file), // Uncomment when referencing a valid Files API URI
-            ]),
+            parts: Some(vec![FunctionResponsePart::InlineData(inline_image)]),
             will_continue: Some(false),
             scheduling: None,
         };

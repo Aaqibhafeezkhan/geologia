@@ -847,7 +847,7 @@ pub type Citation = CitationSource;
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CitationMetadata {
-    #[serde(default)]
+    #[serde(default, alias = "citations")]
     pub citation_sources: Vec<CitationSource>,
 }
 
@@ -1849,6 +1849,39 @@ mod tests {
                 .unwrap()
                 .contains_key("citationSources")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn citation_metadata_parses_from_legacy_citations_alias() -> serde_json::Result<()> {
+        let input = json!({
+            "citations": [
+                {
+                    "startIndex": 0,
+                    "endIndex": 50,
+                    "uri": "https://example.com/source",
+                    "license": "MIT"
+                }
+            ]
+        });
+
+        let metadata: CitationMetadata = serde_json::from_value(input)?;
+
+        assert_eq!(metadata.citation_sources.len(), 1);
+        assert_eq!(
+            metadata.citation_sources[0].uri.as_deref(),
+            Some("https://example.com/source")
+        );
+        assert_eq!(metadata.citation_sources[0].license.as_deref(), Some("MIT"));
+
+        let serialized = serde_json::to_value(&metadata)?;
+        assert!(
+            serialized
+                .as_object()
+                .unwrap()
+                .contains_key("citationSources")
+        );
+        assert!(!serialized.as_object().unwrap().contains_key("citations"));
         Ok(())
     }
 
