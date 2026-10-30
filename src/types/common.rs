@@ -140,7 +140,11 @@ pub enum PartData {
     /// Plain text content.
     Text(String),
     /// Binary data encoded inline. See <https://ai.google.dev/api/caching#Blob>.
+    #[serde(rename_all = "camelCase")]
     InlineData {
+        /// Optional display name of the blob.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
         /// The IANA MIME type of the data (e.g. `"image/png"`).
         mime_type: String,
         /// Base64-encoded binary data.
@@ -194,6 +198,96 @@ mod test {
             media_resolution: None,
             data,
         }
+    }
+
+    #[test]
+    fn inline_data_omits_unset_display_name() -> serde_json::Result<()> {
+        let part = part(PartData::InlineData {
+            display_name: None,
+            mime_type: "image/png".to_string(),
+            data: "aGVsbG8=".to_string(),
+        });
+
+        let value = serde_json::to_value(&part)?;
+
+        assert_eq!(
+            value,
+            json!({
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": "aGVsbG8="
+                }
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inline_data_includes_set_display_name() -> serde_json::Result<()> {
+        let part = part(PartData::InlineData {
+            display_name: Some("photo.png".to_string()),
+            mime_type: "image/png".to_string(),
+            data: "aGVsbG8=".to_string(),
+        });
+
+        let value = serde_json::to_value(&part)?;
+
+        assert_eq!(
+            value,
+            json!({
+                "inlineData": {
+                    "displayName": "photo.png",
+                    "mimeType": "image/png",
+                    "data": "aGVsbG8="
+                }
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inline_data_parses_without_display_name() -> serde_json::Result<()> {
+        let input = json!({
+            "inlineData": {
+                "mimeType": "image/png",
+                "data": "aGVsbG8="
+            }
+        });
+
+        let part: Part = serde_json::from_value(input)?;
+
+        assert!(matches!(
+            part.data,
+            PartData::InlineData {
+                display_name: None,
+                ref mime_type,
+                ref data
+            } if mime_type == "image/png" && data == "aGVsbG8="
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn inline_data_parses_with_display_name() -> serde_json::Result<()> {
+        let input = json!({
+            "inlineData": {
+                "displayName": "photo.png",
+                "mimeType": "image/png",
+                "data": "aGVsbG8="
+            }
+        });
+
+        let part: Part = serde_json::from_value(input)?;
+
+        assert!(matches!(
+            part.data,
+            PartData::InlineData {
+                display_name: Some(ref name),
+                ref mime_type,
+                ref data
+            } if name == "photo.png" && mime_type == "image/png" && data == "aGVsbG8="
+        ));
+        Ok(())
     }
 
     #[test]
