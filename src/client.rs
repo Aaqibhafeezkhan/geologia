@@ -922,6 +922,98 @@ impl GeminiClient {
         }
     }
 
+    /// Lists batch operations owned by the requesting project, with optional pagination.
+    ///
+    /// If `page_size` is `None`, the API returns 10 batches per page by default (maximum 100).
+    /// Pass `next_page_token` from a previous [`ListBatchesResponse`] as `page_token` to
+    /// retrieve the next page.
+    ///
+    /// See <https://ai.google.dev/api/batch#methods>.
+    pub async fn list_batches(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> GeminiResult<ListBatchesResponse> {
+        let mut endpoint_url = self.endpoint_url("batches");
+        let mut query_params = Vec::new();
+        if let Some(size) = page_size {
+            query_params.push(format!("pageSize={size}"));
+        }
+        if let Some(token) = page_token {
+            query_params.push(format!("pageToken={}", encode_query_value(token)));
+        }
+        if !query_params.is_empty() {
+            endpoint_url.push('?');
+            endpoint_url.push_str(&query_params.join("&"));
+        }
+
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("list_batches response: {:?}", txt_json);
+
+        match serde_json::from_str::<ListBatchesResponse>(&txt_json) {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Cancels an in-progress batch generation job by name or ID via
+    /// `POST v1beta/batches/{name}:cancel`.
+    ///
+    /// `name` can be either the full resource name (e.g. `batches/abc-123`)
+    /// or just the batch ID (e.g. `abc-123`).
+    ///
+    /// When cancelled, the batch stops processing new requests and its state transitions
+    /// to [`BatchState::Cancelled`].
+    ///
+    /// See <https://ai.google.dev/api/batch#methods>.
+    pub async fn cancel_batch(&self, name: &str) -> GeminiResult<()> {
+        let base_url = self.batch_resource_url(name);
+        let endpoint_url = format!("{base_url}:cancel");
+        let resp = self
+            .client
+            .post(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        let _ = Self::error_for_status(resp).await?;
+        Ok(())
+    }
+
+    /// Deletes an existing batch resource by name or ID via
+    /// `DELETE v1beta/batches/{name}`.
+    ///
+    /// `name` can be either the full resource name (e.g. `batches/abc-123`)
+    /// or just the batch ID (e.g. `abc-123`).
+    ///
+    /// Deleting a batch indicates the client is no longer interested in the results and
+    /// cleans up metadata. It does not cancel an in-progress batch; call [`cancel_batch`](Self::cancel_batch)
+    /// first if the batch is still running.
+    ///
+    /// See <https://ai.google.dev/api/batch#methods>.
+    pub async fn delete_batch(&self, name: &str) -> GeminiResult<()> {
+        let endpoint_url = self.batch_resource_url(name);
+        let resp = self
+            .client
+            .delete(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let _ = Self::error_for_status(resp).await?;
+        Ok(())
+    }
+
     fn batch_resource_url(&self, name: &str) -> String {
         let path = if name.starts_with("batches/") {
             name.to_string()

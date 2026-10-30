@@ -453,7 +453,8 @@ impl BatchOperation {
     }
 }
 
-/// Paginated list of batch operations returned by `list_batches`.
+/// Paginated list of batch operations returned by
+/// [`GeminiClient::list_batches`](crate::prelude::GeminiClient::list_batches).
 ///
 /// See <https://ai.google.dev/api/batch#methods>.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
