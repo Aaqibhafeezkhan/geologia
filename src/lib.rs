@@ -5,8 +5,8 @@
 //!
 //! This crate provides a high-level async client for interacting with Google's Gemini
 //! generative AI models. It supports model discovery, content generation (including streaming
-//! via SSE), token counting, text embeddings, image generation, context caching, and media file
-//! management (Files API).
+//! via SSE), token counting, text embeddings, image generation, context caching, media file
+//! management (Files API), and batch generation (Batch API).
 //!
 //! # Usage
 //!

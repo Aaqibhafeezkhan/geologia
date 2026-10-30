@@ -306,6 +306,95 @@ impl Part {
     }
 }
 
+/// Serde adapter for Protobuf `int64` optional fields, which serialize as decimal JSON strings
+/// (`"1048576"`) and deserialize from either decimal strings or JSON integers per Proto3 JSON
+/// mapping.
+pub(crate) mod opt_int64_str {
+    use std::fmt;
+
+    use serde::de::{self, Deserializer, Visitor};
+    use serde::ser::Serializer;
+
+    pub fn serialize<S>(value: &Option<i64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(v) => serializer.serialize_str(&v.to_string()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct OptInt64Visitor;
+
+        impl<'de> Visitor<'de> for OptInt64Visitor {
+            type Value = Option<i64>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an optional 64-bit integer or decimal string")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(None)
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(None)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserializer.deserialize_any(Int64Visitor).map(Some)
+            }
+        }
+
+        struct Int64Visitor;
+
+        impl Visitor<'_> for Int64Visitor {
+            type Value = i64;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a 64-bit integer or decimal string")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(value)
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                i64::try_from(value).map_err(de::Error::custom)
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                value.parse::<i64>().map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_option(OptInt64Visitor)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use serde_json::json;

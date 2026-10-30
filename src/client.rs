@@ -15,8 +15,8 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1
 /// Async client for the Google Gemini API.
 ///
 /// Provides methods for model discovery, content generation, streaming, token counting,
-/// text embeddings, image prediction, context caching, and file management. All requests are
-/// authenticated with an API key passed at construction time.
+/// text embeddings, image prediction, context caching, file management, and batch generation
+/// (Batch API). All requests are authenticated with an API key passed at construction time.
 ///
 /// Use [`GeminiClient::builder`] for advanced configuration, such as pointing at a mock
 /// server or sharing a configured [`reqwest::Client`].
@@ -821,6 +821,114 @@ impl GeminiClient {
             .await?;
         let _ = Self::error_for_status(resp).await?;
         Ok(())
+    }
+
+    /// Enqueues a batch of `generateContent` requests for asynchronous processing via
+    /// `POST v1beta/models/{model}:batchGenerateContent`.
+    ///
+    /// The batch can supply input requests inline via [`InputConfig::requests`] or reference a
+    /// `.jsonl` file previously uploaded through the Files API via [`InputConfig::file_name`].
+    ///
+    /// Batch generation runs asynchronously at reduced cost. The returned [`BatchOperation`]
+    /// provides the server-assigned operation name (`batches/{id}`) and initial state
+    /// ([`BatchState::Pending`]). Callers should poll [`get_batch`](Self::get_batch) until
+    /// [`BatchOperation::is_done`] is `true` before reading the output.
+    ///
+    /// `model` can be either the full resource name (e.g. `models/gemini-2.5-flash`)
+    /// or just the model ID (e.g. `gemini-2.5-flash`).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use geologia::prelude::*;
+    ///
+    /// # async fn run() -> geologia::error::Result<()> {
+    /// let client = GeminiClient::new("YOUR_API_KEY".into());
+    /// let request = BatchGenerateContentRequest::new(
+    ///     GenerateContentBatch::builder()
+    ///         .display_name("summaries-batch")
+    ///         .input_config(InputConfig::from_inline(vec![
+    ///             GenerateContentRequest::builder()
+    ///                 .contents(vec![Content::builder().add_text_part("Say hi!").build()])
+    ///                 .build(),
+    ///         ]))
+    ///         .build(),
+    /// );
+    ///
+    /// let operation = client.batch_generate_content(&request, "gemini-2.5-flash").await?;
+    /// println!("Created batch: {:?}", operation.name);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// See <https://ai.google.dev/gemini-api/docs/batch-mode>.
+    pub async fn batch_generate_content(
+        &self,
+        request: &BatchGenerateContentRequest,
+        model: &str,
+    ) -> GeminiResult<BatchOperation> {
+        let model_id = model.strip_prefix("models/").unwrap_or(model);
+        let endpoint_url = self.endpoint_url(&format!("models/{model_id}:batchGenerateContent"));
+        let resp = self
+            .client
+            .post(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(request)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("batch_generate_content response: {:?}", txt_json);
+
+        match serde_json::from_str::<BatchOperation>(&txt_json) {
+            Ok(operation) => Ok(operation),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Retrieves the latest status, metadata, and results of a batch job by name or ID.
+    ///
+    /// `name` can be either the full resource name (e.g. `batches/abc-123`)
+    /// or just the batch ID (e.g. `abc-123`).
+    ///
+    /// Use this method to poll the progress of an asynchronous batch job until
+    /// [`BatchOperation::is_done`] returns `true` or [`BatchOperation::state`] reaches
+    /// [`BatchState::Succeeded`], [`BatchState::Failed`], or [`BatchState::Cancelled`].
+    ///
+    /// See <https://ai.google.dev/gemini-api/docs/batch-mode>.
+    pub async fn get_batch(&self, name: &str) -> GeminiResult<BatchOperation> {
+        let endpoint_url = self.batch_resource_url(name);
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("get_batch response: {:?}", txt_json);
+
+        match serde_json::from_str::<BatchOperation>(&txt_json) {
+            Ok(operation) => Ok(operation),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    fn batch_resource_url(&self, name: &str) -> String {
+        let path = if name.starts_with("batches/") {
+            name.to_string()
+        } else {
+            format!("batches/{name}")
+        };
+        self.endpoint_url(&path)
     }
 
     fn file_resource_url(&self, name: &str) -> String {
