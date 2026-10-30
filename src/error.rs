@@ -31,12 +31,8 @@ pub enum Error {
         /// The raw response body.
         body: String,
     },
-    /// The API response contained no candidate completions.
-    NoCandidatesError,
-    /// An error occurred while decoding the SSE event stream.
+    /// An error occurred while reading or decoding the SSE event stream.
     EventSourceError(LinesCodecError),
-    /// The SSE event stream closed unexpectedly.
-    EventSourceClosedError,
 }
 
 impl Display for Error {
@@ -51,20 +47,25 @@ impl Display for Error {
             Error::ApiError { status, body } => {
                 write!(f, "HTTP error {status}: {body}")
             }
-            Error::NoCandidatesError => {
-                write!(f, "No candidates returned for the prompt")
-            }
             Error::EventSourceError(e) => {
                 write!(f, "EventSource Error: {e}")
-            }
-            Error::EventSourceClosedError => {
-                write!(f, "EventSource closed error")
             }
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Env(e) => Some(e),
+            Error::HttpClient(e) => Some(e),
+            Error::Serde(e) => Some(e),
+            Error::VertexError(e) => Some(e),
+            Error::ApiError { .. } => None,
+            Error::EventSourceError(e) => Some(e),
+        }
+    }
+}
 
 impl Error {
     /// Returns the recommended retry delay if this error is a [`Error::VertexError`]
@@ -125,7 +126,7 @@ mod tests {
         let err = Error::VertexError(vertex_err);
         assert_eq!(err.retry_delay(), Some(Duration::from_secs(15)));
 
-        let other_err = Error::NoCandidatesError;
+        let other_err = Error::EventSourceError(LinesCodecError::MaxLineLengthExceeded);
         assert_eq!(other_err.retry_delay(), None);
     }
 }

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::network::event_source::ServerSentEvent;
-use wiremock::matchers::{body_json, header, method, path};
+use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -408,5 +408,225 @@ async fn error_for_status_passes_through_success() -> Result<()> {
 
     let result = GeminiClient::error_for_status(response).await;
     assert!(result.is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn stream_yields_ok_then_err_on_mid_stream_io_error() -> Result<()> {
+    use tokio_util::bytes::Bytes;
+
+    let chunks: Vec<std::result::Result<Bytes, std::io::Error>> = vec![
+        Ok(Bytes::from_static(
+            b"data: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"text\":\"Hello\"}],\"role\":\"model\"}}]}\n\n",
+        )),
+        Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "connection reset mid-stream",
+        )),
+    ];
+    let body = reqwest::Body::wrap_stream(tokio_stream::iter(chunks));
+    let response: reqwest::Response = http::Response::builder().status(200).body(body)?.into();
+
+    let mut stream = std::pin::pin!(GeminiClient::response_event_stream(response));
+
+    let first = stream
+        .next()
+        .await
+        .ok_or("expected first Ok item from stream")??;
+    assert_eq!(
+        first
+            .candidates
+            .first()
+            .and_then(|c| c.get_text())
+            .as_deref(),
+        Some("Hello")
+    );
+
+    let second = stream
+        .next()
+        .await
+        .ok_or("expected Err item after mid-stream I/O error")?;
+    match second {
+        Err(GeminiError::EventSourceError(LinesCodecError::Io(ref io_err))) => {
+            let mut has_root_cause = false;
+            let mut current = std::error::Error::source(io_err);
+            while let Some(cause) = current {
+                if cause.to_string().contains("connection reset mid-stream") {
+                    has_root_cause = true;
+                    break;
+                }
+                current = cause.source();
+            }
+            assert!(
+                has_root_cause,
+                "expected I/O error source chain to contain root cause, got {io_err:?}"
+            );
+        }
+        other => panic!("expected Err(EventSourceError(LinesCodecError::Io(_))), got {other:?}"),
+    }
+
+    assert!(stream.next().await.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn stream_yields_err_when_io_error_interrupts_partial_event() -> Result<()> {
+    use tokio_util::bytes::Bytes;
+
+    let chunks: Vec<std::result::Result<Bytes, std::io::Error>> = vec![
+        Ok(Bytes::from_static(
+            b"data: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"text\":\"Part 1\"}],\"role\":\"model\"}}]}\n\n",
+        )),
+        Ok(Bytes::from_static(b"data: {\"candidates\":[{\"index\":0")),
+        Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "stream truncated mid-event",
+        )),
+    ];
+    let body = reqwest::Body::wrap_stream(tokio_stream::iter(chunks));
+    let response: reqwest::Response = http::Response::builder().status(200).body(body)?.into();
+
+    let mut stream = std::pin::pin!(GeminiClient::response_event_stream(response));
+
+    let first = stream
+        .next()
+        .await
+        .ok_or("expected first Ok item from stream")??;
+    assert_eq!(
+        first
+            .candidates
+            .first()
+            .and_then(|c| c.get_text())
+            .as_deref(),
+        Some("Part 1")
+    );
+
+    let second = stream
+        .next()
+        .await
+        .ok_or("expected Err item after truncated partial event")?;
+    assert!(matches!(
+        second,
+        Err(GeminiError::EventSourceError(LinesCodecError::Io(_)))
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn stream_skips_events_without_data_line_without_error() -> Result<()> {
+    use tokio_util::bytes::Bytes;
+
+    assert!(
+        GeminiClient::parse_event(Ok(ServerSentEvent {
+            event: Some("ping".into()),
+            data: None,
+            id: Some("1".into()),
+            retry: Some(1000),
+        }))
+        .is_none()
+    );
+
+    let chunks: Vec<std::result::Result<Bytes, std::io::Error>> = vec![Ok(Bytes::from_static(
+        b": keep-alive\n\nevent: ping\nid: 1\nretry: 1000\n\n\ndata: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"text\":\"Done\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n",
+    ))];
+    let body = reqwest::Body::wrap_stream(tokio_stream::iter(chunks));
+    let response: reqwest::Response = http::Response::builder().status(200).body(body)?.into();
+
+    let mut stream = std::pin::pin!(GeminiClient::response_event_stream(response));
+
+    let item = stream
+        .next()
+        .await
+        .ok_or("expected Ok item after skipped no-data events")??;
+    let candidate = item.candidates.first().ok_or("expected candidate")?;
+    assert_eq!(candidate.get_text().as_deref(), Some("Done"));
+    assert_eq!(candidate.finish_reason.as_deref(), Some("STOP"));
+
+    assert!(stream.next().await.is_none());
+    Ok(())
+}
+
+#[test]
+fn parse_event_surfaces_codec_max_line_length_error() {
+    let result = GeminiClient::parse_event(Err(LinesCodecError::MaxLineLengthExceeded));
+    assert!(matches!(
+        result,
+        Some(Err(GeminiError::EventSourceError(
+            LinesCodecError::MaxLineLengthExceeded
+        )))
+    ));
+}
+
+#[tokio::test]
+async fn stream_generate_content_against_mock_server_skips_keepalives_and_yields_chunks()
+-> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    let sse_body = concat!(
+        ": keep-alive\n\n",
+        "data: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"text\":\"Hello, \"}],\"role\":\"model\"}}]}\n\n",
+        "event: ping\n\n",
+        "data: {\"candidates\":[{\"index\":0,\"content\":{\"parts\":[{\"text\":\"world!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n",
+    );
+
+    Mock::given(method("POST"))
+        .and(path("/models/gemini-2.0-flash:streamGenerateContent"))
+        .and(query_param("alt", "sse"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream; charset=utf-8"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let request = GenerateContentRequest::builder()
+        .contents(vec![Content::builder().add_text_part("Greet me").build()])
+        .build();
+
+    let stream = client
+        .stream_generate_content(&request, "gemini-2.0-flash")
+        .await?;
+    let mut stream = std::pin::pin!(stream);
+
+    let first = stream.next().await.ok_or("expected first chunk")??;
+    assert_eq!(
+        first
+            .candidates
+            .first()
+            .and_then(|c| c.get_text())
+            .as_deref(),
+        Some("Hello, ")
+    );
+    assert_eq!(
+        first
+            .candidates
+            .first()
+            .and_then(|c| c.finish_reason.as_deref()),
+        None
+    );
+
+    let second = stream.next().await.ok_or("expected second chunk")??;
+    assert_eq!(
+        second
+            .candidates
+            .first()
+            .and_then(|c| c.get_text())
+            .as_deref(),
+        Some("world!")
+    );
+    assert_eq!(
+        second
+            .candidates
+            .first()
+            .and_then(|c| c.finish_reason.as_deref()),
+        Some("STOP")
+    );
+
+    assert!(stream.next().await.is_none());
     Ok(())
 }
