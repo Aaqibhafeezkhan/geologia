@@ -14,9 +14,9 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1
 
 /// Async client for the Google Gemini API.
 ///
-/// Provides methods for content generation, streaming, token counting, text embeddings,
-/// image prediction, and context caching. All requests are authenticated with an API key
-/// passed at construction time.
+/// Provides methods for model discovery, content generation, streaming, token counting,
+/// text embeddings, image prediction, and context caching. All requests are authenticated
+/// with an API key passed at construction time.
 ///
 /// Use [`GeminiClient::builder`] for advanced configuration, such as pointing at a mock
 /// server or sharing a configured [`reqwest::Client`].
@@ -385,7 +385,7 @@ impl GeminiClient {
             query_params.push(format!("pageSize={size}"));
         }
         if let Some(token) = page_token {
-            query_params.push(format!("pageToken={token}"));
+            query_params.push(format!("pageToken={}", encode_query_value(token)));
         }
         if !query_params.is_empty() {
             endpoint_url.push('?');
@@ -484,6 +484,89 @@ impl GeminiClient {
         Ok(())
     }
 
+    /// Lists the [`Model`]s available through the Gemini API, with optional pagination.
+    ///
+    /// If `page_size` is `None`, the API returns 50 models per page by default (maximum 1000).
+    /// Pass `next_page_token` from a previous [`ListModelsResponse`] as `page_token` to retrieve
+    /// the next page.
+    ///
+    /// See <https://ai.google.dev/api/models#method:-models.list>.
+    pub async fn list_models(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> GeminiResult<ListModelsResponse> {
+        let mut endpoint_url = self.endpoint_url("models");
+        let mut query_params = Vec::new();
+        if let Some(size) = page_size {
+            query_params.push(format!("pageSize={size}"));
+        }
+        if let Some(token) = page_token {
+            query_params.push(format!("pageToken={}", encode_query_value(token)));
+        }
+        if !query_params.is_empty() {
+            endpoint_url.push('?');
+            endpoint_url.push_str(&query_params.join("&"));
+        }
+
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("list_models response: {:?}", txt_json);
+
+        match serde_json::from_str::<ListModelsResponse>(&txt_json) {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Retrieves information about a specific [`Model`], such as its version, token limits,
+    /// supported generation methods, and default generation parameters.
+    ///
+    /// `name` can be either the full resource name (e.g. `models/gemini-2.5-flash`)
+    /// or just the model ID (e.g. `gemini-2.5-flash`).
+    ///
+    /// See <https://ai.google.dev/api/models#method:-models.get>.
+    pub async fn get_model(&self, name: &str) -> GeminiResult<Model> {
+        let endpoint_url = self.model_resource_url(name);
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("get_model response: {:?}", txt_json);
+
+        match serde_json::from_str::<Model>(&txt_json) {
+            Ok(model) => Ok(model),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    fn model_resource_url(&self, name: &str) -> String {
+        let path = if name.starts_with("models/") {
+            name.to_string()
+        } else {
+            format!("models/{name}")
+        };
+        self.endpoint_url(&path)
+    }
+
     fn cached_content_resource_url(&self, name: &str) -> String {
         let path = if name.starts_with("cachedContents/") {
             name.to_string()
@@ -498,6 +581,22 @@ impl GeminiClient {
         let path = path.trim_start_matches('/');
         format!("{base}/{path}")
     }
+}
+
+fn encode_query_value(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(encoded, "%{byte:02X}");
+            }
+        }
+    }
+    encoded
 }
 
 /// Builder for constructing a [`GeminiClient`] with custom configuration.

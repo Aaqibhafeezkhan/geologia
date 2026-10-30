@@ -5,15 +5,16 @@ description: >
   into their projects. Use this skill whenever the user is working with geologia, building Rust
   apps that call Gemini models, generating text or images from Rust, using function calling with
   Gemini in Rust, or asking how to add AI features to a Rust project using the geologia crate.
-  Also trigger when the user asks about streaming Gemini responses, token counting, text
-  embeddings, or structured output in Rust — even if they don't explicitly mention geologia.
+  Also trigger when the user asks about listing or inspecting available Gemini models, streaming
+  Gemini responses, token counting, text embeddings, or structured output in Rust — even if they
+  don't explicitly mention geologia.
 ---
 
 # geologia
 
-`geologia` is an async Rust client for Google's Generative AI API (Gemini). It supports text
-generation (including streaming), token counting, text embeddings, image generation (Imagen),
-and function calling.
+`geologia` is an async Rust client for Google's Generative AI API (Gemini). It supports model
+discovery (`models.list` and `models.get`), text generation (including streaming), token counting,
+text embeddings, image generation (Imagen), context caching, and function calling.
 
 ## Adding the dependency
 
@@ -487,6 +488,44 @@ let batch_response = client
 ```
 
 See `examples/embeddings.rs` for a runnable version.
+
+---
+
+## Listing and inspecting models
+
+Discover which models are available for an API key, which methods they support
+(`supported_generation_methods`), and their token limits and default generation parameters:
+
+```rust
+use geologia::prelude::GeminiClient;
+
+let client = GeminiClient::new(std::env::var("GEMINI_API_KEY")?);
+
+// Paginated listing (pass `None, None` for the default page size of 50)
+let mut page_token: Option<String> = None;
+loop {
+    let page = client.list_models(Some(25), page_token.as_deref()).await?;
+    for model in &page.models {
+        println!(
+            "{} ({:?}) — methods: {:?}",
+            model.name, model.display_name, model.supported_generation_methods
+        );
+    }
+    match page.next_page_token {
+        Some(next) => page_token = Some(next),
+        None => break,
+    }
+}
+
+// Fetch a single model by ID or full `models/...` resource name
+let model = client.get_model("gemini-2.5-flash").await?;
+println!(
+    "Input limit: {:?}, Output limit: {:?}, Thinking: {:?}",
+    model.input_token_limit, model.output_token_limit, model.thinking
+);
+```
+
+See `examples/models.rs` for a runnable version.
 
 ---
 

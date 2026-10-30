@@ -42,6 +42,14 @@ fn resource_url_handles_prefixed_and_unprefixed_names() {
         client.cached_content_resource_url("abc123xyz"),
         "https://generativelanguage.googleapis.com/v1beta/cachedContents/abc123xyz"
     );
+    assert_eq!(
+        client.model_resource_url("models/gemini-2.5-flash"),
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash"
+    );
+    assert_eq!(
+        client.model_resource_url("gemini-2.5-flash"),
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash"
+    );
 }
 
 #[test]
@@ -85,6 +93,18 @@ fn all_endpoint_urls_build_from_configured_base_url() {
     assert_eq!(
         client.cached_content_resource_url("abc123xyz"),
         "https://custom.endpoint.example/v1/cachedContents/abc123xyz"
+    );
+    assert_eq!(
+        client.endpoint_url("models"),
+        "https://custom.endpoint.example/v1/models"
+    );
+    assert_eq!(
+        client.model_resource_url("models/gemini-2.5-flash"),
+        "https://custom.endpoint.example/v1/models/gemini-2.5-flash"
+    );
+    assert_eq!(
+        client.model_resource_url("gemini-2.5-flash"),
+        "https://custom.endpoint.example/v1/models/gemini-2.5-flash"
     );
 }
 
@@ -628,5 +648,231 @@ async fn stream_generate_content_against_mock_server_skips_keepalives_and_yields
     );
 
     assert!(stream.next().await.is_none());
+    Ok(())
+}
+
+#[test]
+fn encode_query_value_percent_encodes_reserved_characters() {
+    assert_eq!(encode_query_value("plain-token_1.0~"), "plain-token_1.0~");
+    assert_eq!(
+        encode_query_value("ChFtb2RlbHM+1/2==&x=y"),
+        "ChFtb2RlbHM%2B1%2F2%3D%3D%26x%3Dy"
+    );
+}
+
+#[tokio::test]
+async fn list_models_against_mock_server_without_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "models": [
+                {
+                    "name": "models/gemini-2.5-flash",
+                    "version": "001",
+                    "displayName": "Gemini 2.5 Flash",
+                    "inputTokenLimit": 1_048_576,
+                    "outputTokenLimit": 65_536,
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                    "thinking": true
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let response = client.list_models(None, None).await?;
+    assert_eq!(response.models.len(), 1);
+    assert_eq!(response.models[0].name, "models/gemini-2.5-flash");
+    assert_eq!(response.models[0].input_token_limit, Some(1_048_576));
+    assert_eq!(response.models[0].output_token_limit, Some(65_536));
+    assert_eq!(response.models[0].thinking, Some(true));
+    assert!(response.next_page_token.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_models_against_mock_server_with_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .and(query_param("pageSize", "2"))
+        .and(query_param("pageToken", "tok+1/2=="))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "models": [
+                {
+                    "name": "models/gemini-2.5-pro",
+                    "displayName": "Gemini 2.5 Pro",
+                    "supportedGenerationMethods": ["generateContent"]
+                },
+                {
+                    "name": "models/gemini-embedding-001",
+                    "displayName": "Gemini Embedding 001",
+                    "supportedGenerationMethods": ["embedContent"]
+                }
+            ],
+            "nextPageToken": "next-tok=="
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let response = client.list_models(Some(2), Some("tok+1/2==")).await?;
+    assert_eq!(response.models.len(), 2);
+    assert_eq!(response.models[0].name, "models/gemini-2.5-pro");
+    assert_eq!(response.models[1].name, "models/gemini-embedding-001");
+    assert_eq!(response.next_page_token.as_deref(), Some("next-tok=="));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_model_against_mock_server_handles_prefixed_and_unprefixed_name() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/models/gemini-2.5-flash"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "models/gemini-2.5-flash",
+            "baseModelId": "gemini-2.5-flash",
+            "version": "001",
+            "displayName": "Gemini 2.5 Flash",
+            "description": "Fast multimodal model.",
+            "inputTokenLimit": 1_048_576,
+            "outputTokenLimit": 65_536,
+            "supportedGenerationMethods": ["generateContent", "countTokens"],
+            "temperature": 1.0,
+            "maxTemperature": 2.0,
+            "topP": 0.95,
+            "topK": 64,
+            "thinking": true
+        })))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let unprefixed = client.get_model("gemini-2.5-flash").await?;
+    let prefixed = client.get_model("models/gemini-2.5-flash").await?;
+
+    assert_eq!(unprefixed, prefixed);
+    assert_eq!(unprefixed.name, "models/gemini-2.5-flash");
+    assert_eq!(
+        unprefixed.base_model_id.as_deref(),
+        Some("gemini-2.5-flash")
+    );
+    assert_eq!(unprefixed.version.as_deref(), Some("001"));
+    assert_eq!(unprefixed.display_name.as_deref(), Some("Gemini 2.5 Flash"));
+    assert_eq!(
+        unprefixed.description.as_deref(),
+        Some("Fast multimodal model.")
+    );
+    assert_eq!(unprefixed.input_token_limit, Some(1_048_576));
+    assert_eq!(unprefixed.output_token_limit, Some(65_536));
+    assert_eq!(
+        unprefixed.supported_generation_methods,
+        vec!["generateContent", "countTokens"]
+    );
+    assert_eq!(unprefixed.temperature, Some(1.0));
+    assert_eq!(unprefixed.max_temperature, Some(2.0));
+    assert_eq!(unprefixed.top_p, Some(0.95));
+    assert_eq!(unprefixed.top_k, Some(64));
+    assert_eq!(unprefixed.thinking, Some(true));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_model_maps_not_found_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/models/does-not-exist"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "error": {
+                "code": 404,
+                "message": "models/does-not-exist is not found for API version v1beta",
+                "status": "NOT_FOUND"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let err = client
+        .get_model("does-not-exist")
+        .await
+        .err()
+        .ok_or("expected 404 error")?;
+
+    match err {
+        GeminiError::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 404);
+            assert_eq!(vertex_err.status, "NOT_FOUND");
+        }
+        other => panic!("expected VertexError, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_cached_contents_against_mock_server_with_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/cachedContents"))
+        .and(query_param("pageSize", "5"))
+        .and(query_param("pageToken", "tok+1/2=="))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "cachedContents": [
+                {
+                    "name": "cachedContents/abc123xyz",
+                    "model": "models/gemini-2.5-flash",
+                    "displayName": "Test Cache"
+                }
+            ],
+            "nextPageToken": "next-cache-tok=="
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let response = client
+        .list_cached_contents(Some(5), Some("tok+1/2=="))
+        .await?;
+    assert_eq!(response.cached_contents.len(), 1);
+    assert_eq!(
+        response.cached_contents[0].name.as_deref(),
+        Some("cachedContents/abc123xyz")
+    );
+    assert_eq!(
+        response.next_page_token.as_deref(),
+        Some("next-cache-tok==")
+    );
     Ok(())
 }

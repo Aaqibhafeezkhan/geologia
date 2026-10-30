@@ -4,8 +4,8 @@
 //! Async Rust client for the Google Gemini API.
 //!
 //! This crate provides a high-level async client for interacting with Google's Gemini
-//! generative AI models. It supports content generation (including streaming via SSE),
-//! token counting, text embeddings, and image generation.
+//! generative AI models. It supports model discovery, content generation (including streaming
+//! via SSE), token counting, text embeddings, image generation, and context caching.
 //!
 //! # Usage
 //!
