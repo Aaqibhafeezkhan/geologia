@@ -9,6 +9,7 @@ mod count_tokens;
 mod embed_content;
 mod error;
 mod generate_content;
+mod models;
 mod predict_image;
 
 pub use cached_content::*;
@@ -17,4 +18,5 @@ pub use count_tokens::*;
 pub use embed_content::*;
 pub use error::*;
 pub use generate_content::*;
+pub use models::*;
 pub use predict_image::*;
