@@ -15,8 +15,8 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1
 /// Async client for the Google Gemini API.
 ///
 /// Provides methods for model discovery, content generation, streaming, token counting,
-/// text embeddings, image prediction, context caching, and file management. All requests are
-/// authenticated with an API key passed at construction time.
+/// text embeddings, image prediction, context caching, file management, and batch generation
+/// (Batch API). All requests are authenticated with an API key passed at construction time.
 ///
 /// Use [`GeminiClient::builder`] for advanced configuration, such as pointing at a mock
 /// server or sharing a configured [`reqwest::Client`].

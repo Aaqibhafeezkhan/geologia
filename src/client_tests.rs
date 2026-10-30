@@ -1740,7 +1740,7 @@ async fn batch_generate_content_against_mock_server_checks_path_key_body_and_res
                 }
             }
         })))
-        .expect(1)
+        .expect(2)
         .mount(&mock_server)
         .await;
 
@@ -1749,6 +1749,8 @@ async fn batch_generate_content_against_mock_server_checks_path_key_body_and_res
         .build();
 
     let request: BatchGenerateContentRequest = serde_json::from_value(request_body)?;
+
+    // 1. Unprefixed model ID
     let op = client
         .batch_generate_content(&request, "gemini-2.5-flash")
         .await?;
@@ -1762,6 +1764,13 @@ async fn batch_generate_content_against_mock_server_checks_path_key_body_and_res
         batch.batch_stats.as_ref().and_then(|s| s.request_count),
         Some(1)
     );
+
+    // 2. Prefixed model ID ("models/gemini-2.5-flash")
+    let op_prefixed = client
+        .batch_generate_content(&request, "models/gemini-2.5-flash")
+        .await?;
+    assert_eq!(op_prefixed.name.as_deref(), Some("batches/op-batch-123"));
+    assert_eq!(op_prefixed.state(), Some(BatchState::Pending));
     Ok(())
 }
 
