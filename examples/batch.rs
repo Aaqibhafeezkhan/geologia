@@ -34,7 +34,14 @@ async fn wait_until_complete(
                     | BatchState::Expired
             )
         {
-            return Ok(op);
+            if state == BatchState::Succeeded && op.error.is_none() {
+                return Ok(op);
+            }
+            return Err(format!(
+                "Batch {batch_name} finished in state {state:?} (error: {:?})",
+                op.error
+            )
+            .into());
         }
 
         attempts += 1;

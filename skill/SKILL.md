@@ -569,13 +569,16 @@ let batch = BatchGenerateContentRequest::new(
 
 // 2. Submit the batch via `POST models/{model}:batchGenerateContent`
 let initial_op = client.batch_generate_content(&batch, "gemini-2.5-flash").await?;
-let batch_name = initial_op.name.as_deref().unwrap();
+let mut op = initial_op;
+let batch_name = op
+    .name
+    .clone()
+    .expect("server should assign a batch name");
 
 // 3. Poll get_batch until complete (`BatchState::Succeeded`, `Failed`, or `Cancelled`)
-let mut op = initial_op;
 while !op.is_done() {
     tokio::time::sleep(Duration::from_secs(5)).await;
-    op = client.get_batch(batch_name).await?;
+    op = client.get_batch(&batch_name).await?;
 }
 
 // 4. Inspect results
@@ -588,7 +591,7 @@ if let Some(responses) = op.inlined_responses() {
 }
 
 // 5. Clean up the batch resource
-client.delete_batch(batch_name).await?;
+client.delete_batch(&batch_name).await?;
 ```
 
 Other batch methods:

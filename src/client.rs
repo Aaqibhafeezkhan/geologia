@@ -924,7 +924,9 @@ impl GeminiClient {
 
     /// Lists batch operations owned by the requesting project, with optional pagination.
     ///
-    /// Pass `page_size` and `page_token` to paginate through results.
+    /// If `page_size` is `None`, the API returns 10 batches per page by default (maximum 100).
+    /// Pass `next_page_token` from a previous [`ListBatchesResponse`] as `page_token` to
+    /// retrieve the next page.
     ///
     /// See <https://ai.google.dev/api/batch#methods>.
     pub async fn list_batches(
