@@ -5,16 +5,17 @@ description: >
   into their projects. Use this skill whenever the user is working with geologia, building Rust
   apps that call Gemini models, generating text or images from Rust, using function calling with
   Gemini in Rust, or asking how to add AI features to a Rust project using the geologia crate.
-  Also trigger when the user asks about listing or inspecting available Gemini models, streaming
-  Gemini responses, token counting, text embeddings, or structured output in Rust — even if they
-  don't explicitly mention geologia.
+  Also trigger when the user asks about listing or inspecting available Gemini models, uploading
+  or managing media files via the Gemini Files API, streaming Gemini responses, token counting,
+  text embeddings, or structured output in Rust — even if they don't explicitly mention geologia.
 ---
 
 # geologia
 
 `geologia` is an async Rust client for Google's Generative AI API (Gemini). It supports model
-discovery (`models.list` and `models.get`), text generation (including streaming), token counting,
-text embeddings, image generation (Imagen), context caching, and function calling.
+discovery (`models.list` and `models.get`), media file management (`files`), text generation
+(including streaming), token counting, text embeddings, image generation (Imagen), context
+caching, and function calling.
 
 ## Adding the dependency
 

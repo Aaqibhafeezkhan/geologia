@@ -50,6 +50,14 @@ fn resource_url_handles_prefixed_and_unprefixed_names() {
         client.model_resource_url("gemini-2.5-flash"),
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash"
     );
+    assert_eq!(
+        client.file_resource_url("files/clip-123abc"),
+        "https://generativelanguage.googleapis.com/v1beta/files/clip-123abc"
+    );
+    assert_eq!(
+        client.file_resource_url("clip-123abc"),
+        "https://generativelanguage.googleapis.com/v1beta/files/clip-123abc"
+    );
 }
 
 #[test]
@@ -105,6 +113,18 @@ fn all_endpoint_urls_build_from_configured_base_url() {
     assert_eq!(
         client.model_resource_url("gemini-2.5-flash"),
         "https://custom.endpoint.example/v1/models/gemini-2.5-flash"
+    );
+    assert_eq!(
+        client.endpoint_url("files"),
+        "https://custom.endpoint.example/v1/files"
+    );
+    assert_eq!(
+        client.file_resource_url("files/clip-123abc"),
+        "https://custom.endpoint.example/v1/files/clip-123abc"
+    );
+    assert_eq!(
+        client.file_resource_url("clip-123abc"),
+        "https://custom.endpoint.example/v1/files/clip-123abc"
     );
 }
 
@@ -874,5 +894,238 @@ async fn list_cached_contents_against_mock_server_with_pagination_params() -> Re
         response.next_page_token.as_deref(),
         Some("next-cache-tok==")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_file_against_mock_server_handles_prefixed_and_unprefixed_name() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/files/clip-123abc"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "files/clip-123abc",
+            "displayName": "Sample Bunny Clip",
+            "mimeType": "video/mp4",
+            "sizeBytes": "10485760",
+            "createTime": "2026-10-30T15:00:00Z",
+            "updateTime": "2026-10-30T15:00:05Z",
+            "expirationTime": "2026-11-01T15:00:00Z",
+            "sha256Hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "uri": "https://generativelanguage.googleapis.com/v1beta/files/clip-123abc",
+            "state": "ACTIVE",
+            "source": "UPLOADED",
+            "videoMetadata": {
+                "videoDuration": "32.5s"
+            }
+        })))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let unprefixed = client.get_file("clip-123abc").await?;
+    let prefixed = client.get_file("files/clip-123abc").await?;
+
+    assert_eq!(unprefixed, prefixed);
+    assert_eq!(unprefixed.name.as_deref(), Some("files/clip-123abc"));
+    assert_eq!(
+        unprefixed.display_name.as_deref(),
+        Some("Sample Bunny Clip")
+    );
+    assert_eq!(unprefixed.mime_type.as_deref(), Some("video/mp4"));
+    assert_eq!(unprefixed.size_bytes, Some(10_485_760));
+    assert_eq!(unprefixed.state, Some(FileState::Active));
+    assert_eq!(unprefixed.source, Some(FileSource::Uploaded));
+    assert_eq!(
+        unprefixed.uri.as_deref(),
+        Some("https://generativelanguage.googleapis.com/v1beta/files/clip-123abc")
+    );
+    assert_eq!(
+        unprefixed.video_metadata,
+        Some(VideoFileMetadata {
+            video_duration: Some("32.5s".to_string()),
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_file_maps_not_found_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/files/missing-file"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "error": {
+                "code": 404,
+                "message": "File files/missing-file does not exist.",
+                "status": "NOT_FOUND"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let err = client
+        .get_file("missing-file")
+        .await
+        .err()
+        .ok_or("expected 404 error")?;
+
+    match err {
+        GeminiError::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 404);
+            assert_eq!(vertex_err.status, "NOT_FOUND");
+        }
+        other => panic!("expected VertexError, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_files_against_mock_server_without_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/files"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "files": [
+                {
+                    "name": "files/doc-1",
+                    "displayName": "Notes.txt",
+                    "mimeType": "text/plain",
+                    "sizeBytes": "512",
+                    "state": "ACTIVE",
+                    "source": "UPLOADED"
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let response = client.list_files(None, None).await?;
+    assert_eq!(response.files.len(), 1);
+    assert_eq!(response.files[0].name.as_deref(), Some("files/doc-1"));
+    assert_eq!(response.files[0].size_bytes, Some(512));
+    assert_eq!(response.files[0].state, Some(FileState::Active));
+    assert!(response.next_page_token.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_files_against_mock_server_with_pagination_params() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/files"))
+        .and(query_param("pageSize", "10"))
+        .and(query_param("pageToken", "tok+1/2=="))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "files": [
+                {
+                    "name": "files/doc-1",
+                    "state": "ACTIVE"
+                },
+                {
+                    "name": "files/vid-2",
+                    "state": "PROCESSING"
+                }
+            ],
+            "nextPageToken": "next-files-tok=="
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let response = client.list_files(Some(10), Some("tok+1/2==")).await?;
+    assert_eq!(response.files.len(), 2);
+    assert_eq!(response.files[0].name.as_deref(), Some("files/doc-1"));
+    assert_eq!(response.files[0].state, Some(FileState::Active));
+    assert_eq!(response.files[1].name.as_deref(), Some("files/vid-2"));
+    assert_eq!(response.files[1].state, Some(FileState::Processing));
+    assert_eq!(
+        response.next_page_token.as_deref(),
+        Some("next-files-tok==")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_file_against_mock_server_handles_prefixed_and_unprefixed_name() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/files/clip-123abc"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    client.delete_file("clip-123abc").await?;
+    client.delete_file("files/clip-123abc").await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_file_maps_permission_denied_error() -> Result<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/files/other-project-file"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+            "error": {
+                "code": 403,
+                "message": "You do not have permission to access the File other-project-file or it may not exist.",
+                "status": "PERMISSION_DENIED"
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let err = client
+        .delete_file("files/other-project-file")
+        .await
+        .err()
+        .ok_or("expected 403 error")?;
+
+    match err {
+        GeminiError::VertexError(vertex_err) => {
+            assert_eq!(vertex_err.code, 403);
+            assert_eq!(vertex_err.status, "PERMISSION_DENIED");
+        }
+        other => panic!("expected VertexError, got {other:?}"),
+    }
     Ok(())
 }
