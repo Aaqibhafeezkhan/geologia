@@ -365,7 +365,8 @@ fn file_search_operation_in_progress_and_completed_and_error() -> serde_json::Re
     });
     let pending_op: FileSearchOperation = serde_json::from_value(pending_payload)?;
     assert!(!pending_op.is_done());
-    assert!(pending_op.document().is_none());
+    assert!(pending_op.response.is_none());
+    assert!(pending_op.document_name().is_none());
     assert!(pending_op.error().is_none());
 
     // Completed successfully
@@ -373,31 +374,32 @@ fn file_search_operation_in_progress_and_completed_and_error() -> serde_json::Re
         "name": "fileSearchStores/store-1/operations/op-1",
         "done": true,
         "response": {
-            "name": "fileSearchStores/store-1/documents/doc-1",
-            "displayName": "done.txt",
-            "state": "STATE_ACTIVE"
+            "parent": "fileSearchStores/store-1",
+            "documentName": "fileSearchStores/store-1/documents/doc-1"
         }
     });
     let completed_op: FileSearchOperation = serde_json::from_value(completed_payload)?;
     assert!(completed_op.is_done());
-    let doc = completed_op.document().expect("document should be present");
+    let resp = completed_op
+        .response
+        .as_ref()
+        .expect("response should be present");
+    assert_eq!(resp.parent.as_deref(), Some("fileSearchStores/store-1"));
     assert_eq!(
-        doc.name.as_deref(),
+        resp.document_name.as_deref(),
         Some("fileSearchStores/store-1/documents/doc-1")
     );
-    assert_eq!(doc.state, Some(DocumentState::Active));
     assert_eq!(
         completed_op.document_name().as_deref(),
         Some("fileSearchStores/store-1/documents/doc-1")
     );
 
-    // Derives document_name from upload operation name if response lacks name
+    // Derives document_name from upload operation name if response lacks documentName
     let upload_op_payload = json!({
         "name": "fileSearchStores/store-1/upload/operations/doc-abc-123",
         "done": true,
         "response": {
-            "mimeType": "text/plain",
-            "sizeBytes": "128"
+            "parent": "fileSearchStores/store-1"
         }
     });
     let upload_op: FileSearchOperation = serde_json::from_value(upload_op_payload)?;

@@ -2215,8 +2215,11 @@ async fn create_file_search_store_against_mock_server_normalizes_model_prefix() 
         .build();
 
     let store_req = FileSearchStore::builder()
+        .name("fileSearchStores/ignored-id")
         .display_name("My Store")
         .embedding_model("gemini-embedding-2") // should be normalized to models/gemini-embedding-2
+        .active_documents_count(10)
+        .size_bytes(2048)
         .build();
 
     let created = client.create_file_search_store(&store_req).await?;
@@ -2521,7 +2524,7 @@ async fn upload_to_file_search_store_executes_two_step_resumable_protocol() -> R
         Some("fileSearchStores/my-store/operations/upload-op-1")
     );
     assert!(!op.is_done());
-    assert!(op.document().is_none());
+    assert!(op.response.is_none());
     Ok(())
 }
 
@@ -2564,9 +2567,8 @@ async fn upload_to_file_search_store_with_request_supports_custom_config() -> Re
             "name": "fileSearchStores/store-99/operations/op-custom",
             "done": true,
             "response": {
-                "name": "fileSearchStores/store-99/documents/doc-custom",
-                "displayName": "custom.txt",
-                "state": "STATE_ACTIVE"
+                "parent": "fileSearchStores/store-99",
+                "documentName": "fileSearchStores/store-99/documents/doc-custom"
             }
         })))
         .expect(1)
@@ -2589,12 +2591,16 @@ async fn upload_to_file_search_store_with_request_supports_custom_config() -> Re
         .await?;
 
     assert!(op.is_done());
-    let doc = op.document().expect("document present");
     assert_eq!(
-        doc.name.as_deref(),
+        op.document_name().as_deref(),
         Some("fileSearchStores/store-99/documents/doc-custom")
     );
-    assert_eq!(doc.state, Some(DocumentState::Active));
+    let resp = op.response.as_ref().expect("response present");
+    assert_eq!(resp.parent.as_deref(), Some("fileSearchStores/store-99"));
+    assert_eq!(
+        resp.document_name.as_deref(),
+        Some("fileSearchStores/store-99/documents/doc-custom")
+    );
     Ok(())
 }
 
@@ -2647,9 +2653,8 @@ async fn get_file_search_operation_against_mock_server() -> Result<()> {
             "name": "fileSearchStores/store-1/operations/op-1",
             "done": true,
             "response": {
-                "name": "fileSearchStores/store-1/documents/doc-1",
-                "displayName": "indexed-doc.txt",
-                "state": "STATE_ACTIVE"
+                "parent": "fileSearchStores/store-1",
+                "documentName": "fileSearchStores/store-1/documents/doc-1"
             }
         })))
         .expect(1)
@@ -2665,12 +2670,16 @@ async fn get_file_search_operation_against_mock_server() -> Result<()> {
         .await?;
 
     assert!(op.is_done());
-    let doc = op.document().expect("document present");
     assert_eq!(
-        doc.name.as_deref(),
+        op.document_name().as_deref(),
         Some("fileSearchStores/store-1/documents/doc-1")
     );
-    assert_eq!(doc.state, Some(DocumentState::Active));
+    let resp = op.response.as_ref().expect("response present");
+    assert_eq!(resp.parent.as_deref(), Some("fileSearchStores/store-1"));
+    assert_eq!(
+        resp.document_name.as_deref(),
+        Some("fileSearchStores/store-1/documents/doc-1")
+    );
     Ok(())
 }
 

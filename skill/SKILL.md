@@ -15,9 +15,9 @@ description: >
 
 `geologia` is an async Rust client for Google's Generative AI API (Gemini). It supports model
 discovery (`models.list` and `models.get`), media file management (`files` / `media.upload`),
-asynchronous batch generation (`batches` / `batchGenerateContent`), text generation (including
-streaming), token counting, text embeddings, image generation (Imagen), context caching, and
-function calling.
+asynchronous batch generation (`batches` / `batchGenerateContent`), File Search stores for semantic
+retrieval and grounding (`fileSearchStores`), text generation (including streaming), token counting,
+text embeddings, image generation (Imagen), context caching, and function calling.
 
 ## Adding the dependency
 
@@ -224,8 +224,9 @@ let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 println!("{:?}", response.candidates[0].url_context_metadata);
 ```
 
-`file_search`, `google_maps`, `computer_use` and `mcp_servers` are also on `Tools` as raw
-`serde_json::Value` configs.
+`google_maps`, `computer_use` and `mcp_servers` are also on `Tools` as raw
+`serde_json::Value` configs. For semantic retrieval and grounding over File Search stores, use the
+strongly typed `Tools { file_search: Some(FileSearch::from_store("fileSearchStores/my-store")), .. }`.
 
 ---
 
@@ -600,6 +601,96 @@ Other batch methods:
 - `client.delete_batch(name)`: delete a batch resource by name (`batches/abc-123`) or bare ID.
 
 See `examples/batch.rs` for a runnable version.
+
+---
+
+## File Search stores (semantic retrieval & grounding)
+
+Index documents for semantic retrieval and ground `generate_content` responses in private knowledge bases
+via the Gemini File Search store API (`fileSearchStores`).
+
+Documents can be directly uploaded with custom chunking parameters or imported from files previously
+uploaded through the Files API. Indexing is performed asynchronously by Gemini.
+
+```rust
+use std::time::Duration;
+use geologia::prelude::{
+    ChunkingConfig, DocumentState, FileSearch, FileSearchStore, GeminiClient,
+    GenerateContentRequest, Tools,
+};
+
+let client = GeminiClient::new(std::env::var("GEMINI_API_KEY")?);
+
+// 1. Create a File Search store
+let store = client
+    .create_file_search_store(
+        &FileSearchStore::builder()
+            .display_name("Knowledge Base")
+            .build(),
+    )
+    .await?;
+let store_name = store.name.expect("server assigns fileSearchStores/{id}");
+
+// 2. Upload raw bytes directly (initiated as a resumable upload session)
+let operation = client
+    .upload_to_file_search_store(
+        &store_name,
+        b"Antigravity is an advanced agentic coding assistant.",
+        Some("text/plain"),
+        Some("overview.txt"),
+    )
+    .await?;
+let op_name = operation.name.expect("server assigns operation name");
+
+// 3. Poll the operation until indexing completes
+let mut op = operation;
+while !op.is_done() {
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    op = client.get_file_search_operation(&op_name).await?;
+}
+
+// 4. Poll the document until ACTIVE (ready for semantic querying)
+let doc_name = op.document_name().expect("operation response has document_name");
+let mut doc = client.get_document(&doc_name).await?;
+while doc.state != Some(DocumentState::Active) {
+    if doc.state == Some(DocumentState::Failed) {
+        return Err("Document processing failed".into());
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    doc = client.get_document(&doc_name).await?;
+}
+
+// 5. Query the model grounded in the File Search store
+let request = GenerateContentRequest::builder()
+    .add_user_text_part("What is Antigravity?")
+    .tools(vec![Tools {
+        file_search: Some(FileSearch::from_store(&store_name)),
+        ..Default::default()
+    }])
+    .build();
+
+let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+println!("{}", response.candidates[0].get_text().unwrap());
+
+// Grounding metadata is accessible on the candidate
+if let Some(ref meta) = response.candidates[0].grounding_metadata {
+    println!("Grounding metadata: {meta:?}");
+}
+
+// 6. Clean up: delete store and documents (force = true deletes non-empty stores)
+client.delete_file_search_store(&store_name, true).await?;
+```
+
+Other File Search methods:
+- `client.get_file_search_store(name)`: fetch store metadata and indexed document counts.
+- `client.list_file_search_stores(page_size, page_token)`: paginated listing of owned stores.
+- `client.upload_to_file_search_store_with_request(store, data, &request)`: upload with custom chunking config (`ChunkingConfig::white_space(max_tokens, overlap)`) or custom metadata.
+- `client.import_file_to_file_search_store(store, &request)`: import a file previously uploaded via the Files API.
+- `client.get_file_search_operation(name)`: check status of an upload or import operation.
+- `client.get_document(name)`: inspect a document's status, chunking stats, and custom metadata.
+- `client.delete_file_search_store(name, force)`: delete a store (set `force = true` if the store contains documents).
+
+See `examples/file-search.rs` for a runnable version.
 
 ---
 

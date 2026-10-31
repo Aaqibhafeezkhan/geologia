@@ -1028,7 +1028,11 @@ impl GeminiClient {
         store: &FileSearchStore,
     ) -> GeminiResult<FileSearchStore> {
         let endpoint_url = self.endpoint_url("fileSearchStores");
-        let mut body = store.clone();
+        let mut body = FileSearchStore {
+            display_name: store.display_name.clone(),
+            embedding_model: store.embedding_model.clone(),
+            ..Default::default()
+        };
         if let Some(ref model) = body.embedding_model
             && !model.starts_with("models/")
         {
@@ -1310,7 +1314,9 @@ impl GeminiClient {
     /// Retrieves the status of a long-running [`FileSearchOperation`] by name.
     ///
     /// `name` can be either the full resource name (e.g.
-    /// `fileSearchStores/{store_id}/operations/{op_id}` or `operations/{op_id}`).
+    /// `fileSearchStores/{store_id}/upload/operations/{op_id}` for uploads,
+    /// `fileSearchStores/{store_id}/operations/{op_id}` for imports, or
+    /// `operations/{op_id}`).
     ///
     /// See <https://ai.google.dev/api/file-search/file-search-stores#Operation>.
     pub async fn get_file_search_operation(&self, name: &str) -> GeminiResult<FileSearchOperation> {

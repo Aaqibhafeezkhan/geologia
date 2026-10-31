@@ -506,19 +506,38 @@ impl UploadToFileSearchStoreRequestBuilder {
     }
 }
 
+/// Response payload of a completed [`FileSearchOperation`].
+///
+/// Both direct uploads (`uploadToFileSearchStore`) and file imports (`importFile`) return
+/// this structure upon successful completion.
+///
+/// See <https://ai.google.dev/api/file-search/file-search-stores#Operation>.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSearchOperationResponse {
+    /// The parent `FileSearchStore` resource name (e.g. `fileSearchStores/my-store-123`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// The resource name of the resulting document (e.g. `fileSearchStores/my-store-123/documents/abc-123`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_name: Option<String>,
+}
+
 /// A long-running operation returned by asynchronous File Search Store actions such as
 /// [`upload_to_file_search_store`](crate::prelude::GeminiClient::upload_to_file_search_store) and
 /// [`import_file_to_file_search_store`](crate::prelude::GeminiClient::import_file_to_file_search_store).
 ///
 /// Callers can poll [`GeminiClient::get_file_search_operation`](crate::prelude::GeminiClient::get_file_search_operation)
 /// until [`FileSearchOperation::is_done`] is `true`. Upon successful completion, the resulting
-/// [`Document`] is available via [`FileSearchOperation::document`].
+/// document resource name is available via [`FileSearchOperation::document_name`], and the document
+/// can be retrieved using [`GeminiClient::get_document`](crate::prelude::GeminiClient::get_document).
 ///
 /// See <https://ai.google.dev/api/file-search/file-search-stores#Operation>.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileSearchOperation {
-    /// Server-assigned operation name (e.g. `fileSearchStores/{store}/operations/{id}` or `operations/{id}`).
+    /// Server-assigned operation name (e.g. `fileSearchStores/{store}/upload/operations/{id}` or
+    /// `fileSearchStores/{store}/operations/{id}`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// `true` if the operation has completed, or `false` if it is still in progress.
@@ -530,20 +549,15 @@ pub struct FileSearchOperation {
     /// Error status if the operation failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<Status>,
-    /// The resulting [`Document`] upon successful completion.
+    /// The response payload upon successful completion.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub response: Option<Document>,
+    pub response: Option<FileSearchOperationResponse>,
 }
 
 impl FileSearchOperation {
     /// Returns `true` if the operation has completed (successfully or with error).
     pub fn is_done(&self) -> bool {
         self.done.unwrap_or(false)
-    }
-
-    /// Returns a reference to the resulting [`Document`] if the operation succeeded and finished.
-    pub fn document(&self) -> Option<&Document> {
-        self.response.as_ref()
     }
 
     /// Returns a reference to the error status if the operation failed.
@@ -558,8 +572,10 @@ impl FileSearchOperation {
     /// `fileSearchStores/{store_id}/upload/operations/{doc_id}`, corresponding to
     /// the document resource name `fileSearchStores/{store_id}/documents/{doc_id}`.
     pub fn document_name(&self) -> Option<String> {
-        if let Some(name) = self.response.as_ref().and_then(|doc| doc.name.clone()) {
-            return Some(name);
+        if let Some(resp) = &self.response
+            && let Some(name) = &resp.document_name
+        {
+            return Some(name.clone());
         }
         if let Some(op_name) = &self.name
             && let Some((store, doc_id)) = op_name.split_once("/upload/operations/")
