@@ -802,4 +802,173 @@ mod test {
         });
         assert!(serde_json::from_value::<Part>(input).is_err());
     }
+
+    #[derive(Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    struct DummyOptInt64 {
+        #[serde(
+            default,
+            with = "super::opt_int64_str",
+            skip_serializing_if = "Option::is_none"
+        )]
+        count: Option<i64>,
+    }
+
+    #[derive(Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    struct DummyOptInt64AlwaysSerialized {
+        #[serde(default, with = "super::opt_int64_str")]
+        count: Option<i64>,
+    }
+
+    #[test]
+    fn opt_int64_str_serialization_encodes_as_string_and_omits_none() -> serde_json::Result<()> {
+        let none = DummyOptInt64 { count: None };
+        assert_eq!(serde_json::to_value(&none)?, json!({}));
+
+        let none_always = DummyOptInt64AlwaysSerialized { count: None };
+        assert_eq!(
+            serde_json::to_value(&none_always)?,
+            json!({ "count": null })
+        );
+
+        let zero = DummyOptInt64 { count: Some(0) };
+        assert_eq!(serde_json::to_value(&zero)?, json!({ "count": "0" }));
+
+        let positive = DummyOptInt64 {
+            count: Some(1_048_576),
+        };
+        assert_eq!(
+            serde_json::to_value(&positive)?,
+            json!({ "count": "1048576" })
+        );
+
+        let negative = DummyOptInt64 { count: Some(-42) };
+        assert_eq!(serde_json::to_value(&negative)?, json!({ "count": "-42" }));
+
+        let max_val = DummyOptInt64 {
+            count: Some(i64::MAX),
+        };
+        assert_eq!(
+            serde_json::to_value(&max_val)?,
+            json!({ "count": "9223372036854775807" })
+        );
+
+        let min_val = DummyOptInt64 {
+            count: Some(i64::MIN),
+        };
+        assert_eq!(
+            serde_json::to_value(&min_val)?,
+            json!({ "count": "-9223372036854775808" })
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn opt_int64_str_deserialization_from_strings_and_integers() -> serde_json::Result<()> {
+        // From decimal strings
+        let from_str: DummyOptInt64 = serde_json::from_value(json!({ "count": "1048576" }))?;
+        assert_eq!(from_str.count, Some(1_048_576));
+
+        let from_negative_str: DummyOptInt64 = serde_json::from_value(json!({ "count": "-42" }))?;
+        assert_eq!(from_negative_str.count, Some(-42));
+
+        let from_max_str: DummyOptInt64 =
+            serde_json::from_value(json!({ "count": "9223372036854775807" }))?;
+        assert_eq!(from_max_str.count, Some(i64::MAX));
+
+        let from_min_str: DummyOptInt64 =
+            serde_json::from_value(json!({ "count": "-9223372036854775808" }))?;
+        assert_eq!(from_min_str.count, Some(i64::MIN));
+
+        // From integer literals (i64 / u64)
+        let from_int: DummyOptInt64 = serde_json::from_value(json!({ "count": 1048576 }))?;
+        assert_eq!(from_int.count, Some(1_048_576));
+
+        let from_negative_int: DummyOptInt64 = serde_json::from_value(json!({ "count": -42 }))?;
+        assert_eq!(from_negative_int.count, Some(-42));
+
+        let from_zero_int: DummyOptInt64 = serde_json::from_value(json!({ "count": 0 }))?;
+        assert_eq!(from_zero_int.count, Some(0));
+
+        let from_max_int: DummyOptInt64 = serde_json::from_value(json!({ "count": i64::MAX }))?;
+        assert_eq!(from_max_int.count, Some(i64::MAX));
+
+        // From null
+        let from_null: DummyOptInt64 = serde_json::from_value(json!({ "count": null }))?;
+        assert_eq!(from_null.count, None);
+
+        // From missing field
+        let from_empty: DummyOptInt64 = serde_json::from_value(json!({}))?;
+        assert_eq!(from_empty.count, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn opt_int64_str_round_trip() -> serde_json::Result<()> {
+        let values = [
+            None,
+            Some(0),
+            Some(1),
+            Some(-1),
+            Some(1_048_576),
+            Some(-1_048_576),
+            Some(i64::MAX),
+            Some(i64::MIN),
+        ];
+
+        for &val in &values {
+            let item = DummyOptInt64 { count: val };
+            let serialized = serde_json::to_value(&item)?;
+            let deserialized: DummyOptInt64 = serde_json::from_value(serialized)?;
+            assert_eq!(item, deserialized);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn opt_int64_str_rejects_malformed_and_overflow_payloads() {
+        // Non-numeric string
+        assert!(
+            serde_json::from_value::<DummyOptInt64>(json!({ "count": "not_a_number" })).is_err()
+        );
+
+        // Empty string
+        assert!(serde_json::from_value::<DummyOptInt64>(json!({ "count": "" })).is_err());
+
+        // Float string
+        assert!(serde_json::from_value::<DummyOptInt64>(json!({ "count": "12.34" })).is_err());
+
+        // Overflow string (> i64::MAX)
+        assert!(
+            serde_json::from_value::<DummyOptInt64>(json!({
+                "count": "9223372036854775808"
+            }))
+            .is_err()
+        );
+
+        // Underflow string (< i64::MIN)
+        assert!(
+            serde_json::from_value::<DummyOptInt64>(json!({
+                "count": "-9223372036854775809"
+            }))
+            .is_err()
+        );
+
+        // Float JSON number
+        assert!(serde_json::from_value::<DummyOptInt64>(json!({ "count": 12.34 })).is_err());
+
+        // u64 integer exceeding i64::MAX
+        assert!(serde_json::from_value::<DummyOptInt64>(json!({ "count": u64::MAX })).is_err());
+
+        // Boolean
+        assert!(serde_json::from_value::<DummyOptInt64>(json!({ "count": true })).is_err());
+
+        // Array
+        assert!(serde_json::from_value::<DummyOptInt64>(json!({ "count": [1, 2] })).is_err());
+
+        // Object
+        assert!(serde_json::from_value::<DummyOptInt64>(json!({ "count": { "a": 1 } })).is_err());
+    }
 }
