@@ -615,7 +615,7 @@ uploaded through the Files API. Indexing is performed asynchronously by Gemini.
 ```rust
 use std::time::Duration;
 use geologia::prelude::{
-    ChunkingConfig, DocumentState, FileSearch, FileSearchStore, GeminiClient,
+    ChunkingConfig, Content, DocumentState, FileSearch, FileSearchStore, GeminiClient,
     GenerateContentRequest, Tools,
 };
 
@@ -662,7 +662,11 @@ while doc.state != Some(DocumentState::Active) {
 
 // 5. Query the model grounded in the File Search store
 let request = GenerateContentRequest::builder()
-    .add_user_text_part("What is Antigravity?")
+    .contents(vec![
+        Content::builder()
+            .add_text_part("What is Antigravity?")
+            .build(),
+    ])
     .tools(vec![Tools {
         file_search: Some(FileSearch::from_store(&store_name)),
         ..Default::default()

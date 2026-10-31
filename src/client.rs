@@ -1016,8 +1016,7 @@ impl GeminiClient {
 
     /// Creates a new [`FileSearchStore`] for indexing documents.
     ///
-    /// If `store.name` is omitted, the server automatically generates a unique resource name
-    /// derived from `display_name` (or a random identifier).
+    /// Only `display_name` and `embedding_model` are sent; the server assigns the resource name.
     ///
     /// If `store.embedding_model` is specified without a `models/` prefix, `models/` is prepended
     /// automatically.
