@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Content, VertexApiError};
+use super::{Content, FileSearch, VertexApiError};
 use crate::error::Result;
 
 /// Request body for the `generateContent` and `streamGenerateContent` endpoints.
@@ -167,10 +167,10 @@ pub struct Tools {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_context: Option<UrlContext>,
 
-    /// File search tool configuration. See <https://ai.google.dev/api/caching#FileSearch>.
+    /// File search tool configuration. See <https://ai.google.dev/api/file-search/file-search-stores#FileSearch>.
     #[serde(rename = "fileSearch")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_search: Option<Value>,
+    pub file_search: Option<FileSearch>,
 
     /// Google Maps grounding tool configuration. See <https://ai.google.dev/api/caching#GoogleMaps>.
     #[serde(rename = "googleMaps")]

@@ -15,8 +15,8 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1
 /// Async client for the Google Gemini API.
 ///
 /// Provides methods for model discovery, content generation, streaming, token counting,
-/// text embeddings, image prediction, context caching, file management, and batch generation
-/// (Batch API). All requests are authenticated with an API key passed at construction time.
+/// text embeddings, image prediction, context caching, file management, batch generation
+/// (Batch API), and File Search store management for semantic retrieval. All requests are authenticated with an API key passed at construction time.
 ///
 /// Use [`GeminiClient::builder`] for advanced configuration, such as pointing at a mock
 /// server or sharing a configured [`reqwest::Client`].
@@ -1014,6 +1014,363 @@ impl GeminiClient {
         Ok(())
     }
 
+    /// Creates a new [`FileSearchStore`] for indexing documents.
+    ///
+    /// Only `display_name` and `embedding_model` are sent; the server assigns the resource name.
+    ///
+    /// If `store.embedding_model` is specified without a `models/` prefix, `models/` is prepended
+    /// automatically.
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#method:-filesearchstores.create>.
+    pub async fn create_file_search_store(
+        &self,
+        store: &FileSearchStore,
+    ) -> GeminiResult<FileSearchStore> {
+        let endpoint_url = self.endpoint_url("fileSearchStores");
+        let mut body = FileSearchStore {
+            display_name: store.display_name.clone(),
+            embedding_model: store.embedding_model.clone(),
+            ..Default::default()
+        };
+        if let Some(ref model) = body.embedding_model
+            && !model.starts_with("models/")
+        {
+            body.embedding_model = Some(format!("models/{model}"));
+        }
+        let resp = self
+            .client
+            .post(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&body)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("create_file_search_store response: {:?}", txt_json);
+
+        match serde_json::from_str::<FileSearchStore>(&txt_json) {
+            Ok(created) => Ok(created),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Retrieves metadata for an existing [`FileSearchStore`] by name or ID.
+    ///
+    /// `name` can be either the full resource name (e.g. `fileSearchStores/my-store-123`)
+    /// or just the store ID (e.g. `my-store-123`).
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#method:-filesearchstores.get>.
+    pub async fn get_file_search_store(&self, name: &str) -> GeminiResult<FileSearchStore> {
+        let endpoint_url = self.file_search_store_resource_url(name);
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("get_file_search_store response: {:?}", txt_json);
+
+        match serde_json::from_str::<FileSearchStore>(&txt_json) {
+            Ok(store) => Ok(store),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Lists [`FileSearchStore`]s owned by the requesting project, with optional pagination.
+    ///
+    /// Pass `page_size` and `page_token` to paginate through results.
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#method:-filesearchstores.list>.
+    pub async fn list_file_search_stores(
+        &self,
+        page_size: Option<u32>,
+        page_token: Option<&str>,
+    ) -> GeminiResult<ListFileSearchStoresResponse> {
+        let mut endpoint_url = self.endpoint_url("fileSearchStores");
+        let mut query_params = Vec::new();
+        if let Some(size) = page_size {
+            query_params.push(format!("pageSize={size}"));
+        }
+        if let Some(token) = page_token {
+            query_params.push(format!("pageToken={}", encode_query_value(token)));
+        }
+        if !query_params.is_empty() {
+            endpoint_url.push('?');
+            endpoint_url.push_str(&query_params.join("&"));
+        }
+
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("list_file_search_stores response: {:?}", txt_json);
+
+        match serde_json::from_str::<ListFileSearchStoresResponse>(&txt_json) {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Deletes an existing [`FileSearchStore`] resource by name or ID.
+    ///
+    /// `name` can be either the full resource name (e.g. `fileSearchStores/my-store-123`)
+    /// or just the store ID (e.g. `my-store-123`).
+    ///
+    /// When `force` is `true`, any documents contained in the store are deleted as well.
+    /// When `force` is `false`, attempting to delete a non-empty store fails with an error.
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#method:-filesearchstores.delete>.
+    pub async fn delete_file_search_store(&self, name: &str, force: bool) -> GeminiResult<()> {
+        let mut endpoint_url = self.file_search_store_resource_url(name);
+        if force {
+            endpoint_url.push_str("?force=true");
+        }
+        let resp = self
+            .client
+            .delete(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let _ = Self::error_for_status(resp).await?;
+        Ok(())
+    }
+
+    /// Directly uploads raw bytes to a [`FileSearchStore`] via
+    /// `POST /upload/v1beta/{store}:uploadToFileSearchStore`.
+    ///
+    /// This initiates a two-step resumable upload session and returns a [`FileSearchOperation`].
+    /// Processing (parsing, chunking, and vector embedding) happens asynchronously. Callers should
+    /// poll [`get_file_search_operation`](Self::get_file_search_operation) until
+    /// [`FileSearchOperation::is_done`] is `true` before querying the store with the [`FileSearch`] tool.
+    ///
+    /// `store` can be either the full resource name (e.g. `fileSearchStores/my-store-123`)
+    /// or just the store ID (e.g. `my-store-123`).
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#method:-media.uploadtofilesearchstore>.
+    pub async fn upload_to_file_search_store(
+        &self,
+        store: &str,
+        data: &[u8],
+        mime_type: Option<&str>,
+        display_name: Option<&str>,
+    ) -> GeminiResult<FileSearchOperation> {
+        let request = UploadToFileSearchStoreRequest {
+            display_name: display_name.map(str::to_string),
+            mime_type: mime_type.map(str::to_string),
+            custom_metadata: None,
+            chunking_config: None,
+        };
+        self.upload_to_file_search_store_with_request(store, data, &request)
+            .await
+    }
+
+    /// Directly uploads raw bytes to a [`FileSearchStore`] with a custom [`UploadToFileSearchStoreRequest`]
+    /// (such as custom chunking parameters or custom metadata).
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#method:-media.uploadtofilesearchstore>.
+    pub async fn upload_to_file_search_store_with_request(
+        &self,
+        store: &str,
+        data: &[u8],
+        request: &UploadToFileSearchStoreRequest,
+    ) -> GeminiResult<FileSearchOperation> {
+        let normalized_store = if store.starts_with("fileSearchStores/") {
+            store.to_string()
+        } else {
+            format!("fileSearchStores/{store}")
+        };
+        let start_url =
+            self.upload_endpoint_url(&format!("{normalized_store}:uploadToFileSearchStore"));
+        let num_bytes = data.len();
+        let mime = request
+            .mime_type
+            .as_deref()
+            .unwrap_or("application/octet-stream");
+
+        // Step 1: Initiate a resumable upload session and read `x-goog-upload-url`.
+        let start_resp = self
+            .client
+            .post(&start_url)
+            .header("x-goog-api-key", &self.api_key)
+            .header("X-Goog-Upload-Protocol", "resumable")
+            .header("X-Goog-Upload-Command", "start")
+            .header("X-Goog-Upload-Header-Content-Length", num_bytes.to_string())
+            .header("X-Goog-Upload-Header-Content-Type", mime)
+            .json(request)
+            .send()
+            .await?;
+        let start_resp = Self::error_for_status(start_resp).await?;
+
+        let upload_url = start_resp
+            .headers()
+            .get("x-goog-upload-url")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_owned);
+
+        let upload_url = match upload_url {
+            Some(url) => url,
+            None => {
+                let body = start_resp.text().await.unwrap_or_default();
+                let detail = if body.is_empty() {
+                    "Resumable upload initiation response missing x-goog-upload-url header"
+                        .to_string()
+                } else {
+                    format!(
+                        "Resumable upload initiation response missing x-goog-upload-url header: {body}"
+                    )
+                };
+                return Err(GeminiError::UnexpectedResponse { message: detail });
+            }
+        };
+
+        // Step 2: Upload the raw file bytes and finalize the pre-authenticated upload session.
+        let finalize_resp = self
+            .client
+            .post(&upload_url)
+            .header(reqwest::header::CONTENT_LENGTH, num_bytes)
+            .header("X-Goog-Upload-Offset", "0")
+            .header("X-Goog-Upload-Command", "upload, finalize")
+            .body(data.to_vec())
+            .send()
+            .await?;
+        let finalize_resp = Self::error_for_status(finalize_resp).await?;
+
+        let txt_json = finalize_resp.text().await?;
+        tracing::debug!("upload_to_file_search_store response: {:?}", txt_json);
+
+        match serde_json::from_str::<FileSearchOperation>(&txt_json) {
+            Ok(op) => Ok(op),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Imports a file previously uploaded via the Files API into a [`FileSearchStore`] via
+    /// `POST v1beta/{store}:importFile`.
+    ///
+    /// Returns a [`FileSearchOperation`]. Callers should poll
+    /// [`get_file_search_operation`](Self::get_file_search_operation) until
+    /// [`FileSearchOperation::is_done`] is `true`.
+    ///
+    /// `store` can be either the full resource name (e.g. `fileSearchStores/my-store-123`)
+    /// or just the store ID (e.g. `my-store-123`).
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#method:-filesearchstores.importfile>.
+    pub async fn import_file_to_file_search_store(
+        &self,
+        store: &str,
+        request: &ImportFileRequest,
+    ) -> GeminiResult<FileSearchOperation> {
+        let normalized_store = if store.starts_with("fileSearchStores/") {
+            store.to_string()
+        } else {
+            format!("fileSearchStores/{store}")
+        };
+        let endpoint_url = self.endpoint_url(&format!("{normalized_store}:importFile"));
+        let resp = self
+            .client
+            .post(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(request)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("import_file_to_file_search_store response: {:?}", txt_json);
+
+        match serde_json::from_str::<FileSearchOperation>(&txt_json) {
+            Ok(op) => Ok(op),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Retrieves the status of a long-running [`FileSearchOperation`] by name.
+    ///
+    /// `name` can be either the full resource name (e.g.
+    /// `fileSearchStores/{store_id}/upload/operations/{op_id}` for uploads,
+    /// `fileSearchStores/{store_id}/operations/{op_id}` for imports, or
+    /// `operations/{op_id}`).
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#Operation>.
+    pub async fn get_file_search_operation(&self, name: &str) -> GeminiResult<FileSearchOperation> {
+        let endpoint_url = self.endpoint_url(name);
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("get_file_search_operation response: {:?}", txt_json);
+
+        match serde_json::from_str::<FileSearchOperation>(&txt_json) {
+            Ok(op) => Ok(op),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Retrieves metadata for a [`Document`] in a [`FileSearchStore`].
+    ///
+    /// `name` is the full resource name of the document, formatted as
+    /// `fileSearchStores/{store_id}/documents/{doc_id}`.
+    ///
+    /// Poll `get_document` (or the parent [`FileSearchOperation`]) until [`Document::state`] is
+    /// `Some(`[`DocumentState::Active`]`)` before querying the store.
+    ///
+    /// See <https://ai.google.dev/api/file-search/file-search-stores#method:-filesearchstores.documents.get>.
+    pub async fn get_document(&self, name: &str) -> GeminiResult<Document> {
+        let endpoint_url = self.endpoint_url(name);
+        let resp = self
+            .client
+            .get(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+        tracing::debug!("get_document response: {:?}", txt_json);
+
+        match serde_json::from_str::<Document>(&txt_json) {
+            Ok(doc) => Ok(doc),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
     fn batch_resource_url(&self, name: &str) -> String {
         let path = if name.starts_with("batches/") {
             name.to_string()
@@ -1046,6 +1403,15 @@ impl GeminiClient {
             name.to_string()
         } else {
             format!("cachedContents/{name}")
+        };
+        self.endpoint_url(&path)
+    }
+
+    fn file_search_store_resource_url(&self, name: &str) -> String {
+        let path = if name.starts_with("fileSearchStores/") {
+            name.to_string()
+        } else {
+            format!("fileSearchStores/{name}")
         };
         self.endpoint_url(&path)
     }
