@@ -38,10 +38,10 @@ tokio-stream = "0.1"
 
 ```rust
 let api_key = std::env::var("GEMINI_API_KEY")?;
-let client = GeminiClient::new(api_key);
+let client = GeminiClient::new(api_key.clone());
 
 // Or configure a custom base URL or reqwest::Client via the builder:
-let client = GeminiClient::builder(api_key)
+let client = GeminiClient::builder(&api_key)
     .base_url("https://my-proxy.internal/v1beta")
     .http_client(custom_http_client)
     .build();
@@ -127,7 +127,7 @@ let request = GenerateContentRequest::builder()
             .add_text_part("You are a terse Rust expert. Be concise.")
             .build(),
     )
-    .contents(vec![...])
+    .contents(vec![/* ... */])
     .build();
 ```
 
@@ -135,7 +135,8 @@ let request = GenerateContentRequest::builder()
 
 ```rust
 use geologia::prelude::{
-    GenerationConfig, MediaResolution, Modality, ThinkingConfig, ThinkingLevel,
+    GenerateContentRequest, GenerationConfig, MediaResolution, Modality, ThinkingConfig,
+    ThinkingLevel,
 };
 
 let config = GenerationConfig::builder()
@@ -155,7 +156,7 @@ let config = GenerationConfig::builder()
 
 let request = GenerateContentRequest::builder()
     .generation_config(config)
-    .contents(vec![...])
+    .contents(vec![/* ... */])
     .build();
 ```
 
@@ -166,7 +167,7 @@ use std::collections::HashMap;
 use geologia::prelude::{GenerateContentRequest, ServiceTier};
 
 let request = GenerateContentRequest::builder()
-    .contents(vec![...])
+    .contents(vec![/* ... */])
     .cached_content("cachedContents/my-cache") // reuse a context cache
     .service_tier(ServiceTier::Flex)
     .store(false)
@@ -207,7 +208,7 @@ if candidate.finish_reason.as_deref() == Some("CONTINUATION") {
 ## Built-in tools (code execution, URL context)
 
 ```rust
-use geologia::prelude::{CodeExecution, Tools, UrlContext};
+use geologia::prelude::{CodeExecution, GenerateContentRequest, Tools, UrlContext};
 
 let tools = Tools {
     code_execution: Some(CodeExecution {}),
@@ -216,7 +217,7 @@ let tools = Tools {
 };
 
 let request = GenerateContentRequest::builder()
-    .contents(vec![...])
+    .contents(vec![/* ... */])
     .tools(vec![tools])
     .build();
 let response = client.generate_content(&request, "gemini-3.8-flash").await?;
@@ -324,6 +325,9 @@ if let Some(candidate) = response.candidates.last()
 
 ## Image generation (Imagen)
 
+> [!NOTE]
+> `client.predict_image` posts to `models/{model}:predict`. On standard Gemini API keys, no Imagen model currently appears in `GET /v1beta/models`, so this path is unverified and may return `404 NOT_FOUND` (see issue #44). This method is intended for environments with Imagen access enabled.
+
 ```rust
 use geologia::prelude::{
     GeminiClient, PersonGeneration, PredictImageRequest, PredictImageRequestParameters,
@@ -349,7 +353,7 @@ let request = PredictImageRequest {
 };
 
 let mut result = client
-    .predict_image(&request, "imagen-4.0-generate-001")
+    .predict_image(&request, "your-imagen-model")
     .await?;
 
 let image = result.predictions.pop().unwrap();
@@ -381,14 +385,39 @@ To count a full request, including system instruction, tools and multi-turn hist
 argument, so you don't repeat it:
 
 ```rust
-use geologia::prelude::{Content, CountTokensRequestBuilder, GenerateContentRequest, Role};
+use geologia::prelude::{
+    Content, CountTokensRequestBuilder, FunctionDeclaration, GenerateContentRequest, Role, Tools,
+};
+use serde_json::json;
+
+let speed_function = FunctionDeclaration {
+    name: "bird_airspeed".to_string(),
+    description: "Looks up the cruising airspeed of a bird species".to_string(),
+    behavior: None,
+    parameters: None,
+    parameters_json_schema: Some(json!({
+        "type": "object",
+        "properties": {
+            "species": {
+                "type": "string",
+                "description": "The bird species, e.g. 'European swallow'"
+            }
+        },
+        "required": ["species"]
+    })),
+    response: None,
+    response_json_schema: None,
+};
 
 let generate_content_request = GenerateContentRequest::builder()
     .system_instruction(Content::builder().add_text_part("Answer in one sentence.").build())
     .contents(vec![
         Content::builder().role(Role::User).add_text_part("How many tokens is this?").build(),
     ])
-    .tools(tools)
+    .tools(vec![Tools {
+        function_declarations: Some(vec![speed_function]),
+        ..Default::default()
+    }])
     .build();
 
 let request =
@@ -414,7 +443,7 @@ let client = GeminiClient::new(std::env::var("GEMINI_API_KEY")?);
 
 // 1. Create a cache (must meet the model's minimum token threshold, e.g. 2,048 tokens).
 let cache_request = CachedContent::builder()
-    .model("gemini-2.5-flash")
+    .model("gemini-3.8-flash")
     .display_name("Reference Doc")
     .system_instruction(Content::builder().add_text_part("You are a helpful analyst.").build())
     .contents(vec![
@@ -434,7 +463,7 @@ let request = GenerateContentRequest::builder()
     ])
     .build();
 
-let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 
 // 3. Delete the cache when done.
 client.delete_cached_content(&cache_name).await?;
@@ -511,7 +540,7 @@ let request = GenerateContentRequest::builder()
     ])
     .build();
 
-let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 
 // 4. Clean up when finished (files otherwise expire automatically after ~48 hours).
 client.delete_file(&file_name).await?;
@@ -569,7 +598,7 @@ let batch = BatchGenerateContentRequest::new(
 );
 
 // 2. Submit the batch via `POST models/{model}:batchGenerateContent`
-let initial_op = client.batch_generate_content(&batch, "gemini-2.5-flash").await?;
+let initial_op = client.batch_generate_content(&batch, "gemini-3.8-flash").await?;
 let mut op = initial_op;
 let batch_name = op
     .name
@@ -640,7 +669,7 @@ let operation = client
         Some("overview.txt"),
     )
     .await?;
-let op_name = operation.name.expect("server assigns operation name");
+let op_name = operation.name.clone().expect("server assigns operation name");
 
 // 3. Poll the operation until indexing completes
 let mut op = operation;
@@ -673,7 +702,7 @@ let request = GenerateContentRequest::builder()
     }])
     .build();
 
-let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 println!("{}", response.candidates[0].get_text().unwrap());
 
 // Grounding metadata is accessible on the candidate
@@ -770,7 +799,7 @@ loop {
 }
 
 // Fetch a single model by ID or full `models/...` resource name
-let model = client.get_model("gemini-2.5-flash").await?;
+let model = client.get_model("gemini-3.8-flash").await?;
 println!(
     "Input limit: {:?}, Output limit: {:?}, Thinking: {:?}",
     model.input_token_limit, model.output_token_limit, model.thinking
@@ -807,7 +836,7 @@ let config = GenerationConfig::builder()
 
 ## Error handling
 
-All methods return `Result<_, geologia::Error>`. The error type covers HTTP errors, API-level
+All methods return `Result<_, geologia::error::Error>`. The error type covers HTTP errors, API-level
 errors (with status codes and messages from Google), and serialization failures. Use standard
 `?` propagation or match on the error for specific handling.
 
@@ -817,6 +846,5 @@ errors (with status codes and messages from Google), and serialization failures.
 
 - `"gemini-3.1-pro-preview"` — most capable text model
 - `"gemini-3.8-flash"` — fast and cost-efficient
-- `"gemini-3.1-flash-lite"` — fastest and cheapest (used by the examples)
-- `"imagen-4.0-generate-001"` — image generation
+- `"gemini-3.1-flash-lite"` — fastest and cheapest
 - `"gemini-embedding-001"` — text embeddings
