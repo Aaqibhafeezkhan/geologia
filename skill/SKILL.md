@@ -326,7 +326,7 @@ if let Some(candidate) = response.candidates.last()
 ## Image generation (Imagen)
 
 > [!NOTE]
-> `client.predict_image` posts to `models/{model}:predict`. On standard Gemini API keys, no Imagen model currently appears in `GET /v1beta/models` and calling `:predict` returns `404 NOT_FOUND` (see issue #44). This method is intended for Vertex AI or environments with Imagen access enabled.
+> `client.predict_image` posts to `models/{model}:predict`. On standard Gemini API keys, no Imagen model currently appears in `GET /v1beta/models`, so this path is unverified and may return `404 NOT_FOUND` (see issue #44). This method is intended for environments with Imagen access enabled.
 
 ```rust
 use geologia::prelude::{
@@ -353,7 +353,7 @@ let request = PredictImageRequest {
 };
 
 let mut result = client
-    .predict_image(&request, "imagen-4.0-generate-001")
+    .predict_image(&request, "your-imagen-model")
     .await?;
 
 let image = result.predictions.pop().unwrap();
@@ -386,7 +386,27 @@ argument, so you don't repeat it:
 
 ```rust
 use geologia::prelude::{
-    Content, CountTokensRequestBuilder, GenerateContentRequest, Role, Tools,
+    Content, CountTokensRequestBuilder, FunctionDeclaration, GenerateContentRequest, Role, Tools,
+};
+use serde_json::json;
+
+let speed_function = FunctionDeclaration {
+    name: "bird_airspeed".to_string(),
+    description: "Looks up the cruising airspeed of a bird species".to_string(),
+    behavior: None,
+    parameters: None,
+    parameters_json_schema: Some(json!({
+        "type": "object",
+        "properties": {
+            "species": {
+                "type": "string",
+                "description": "The bird species, e.g. 'European swallow'"
+            }
+        },
+        "required": ["species"]
+    })),
+    response: None,
+    response_json_schema: None,
 };
 
 let generate_content_request = GenerateContentRequest::builder()
@@ -394,7 +414,10 @@ let generate_content_request = GenerateContentRequest::builder()
     .contents(vec![
         Content::builder().role(Role::User).add_text_part("How many tokens is this?").build(),
     ])
-    .tools(vec![Tools::default()])
+    .tools(vec![Tools {
+        function_declarations: Some(vec![speed_function]),
+        ..Default::default()
+    }])
     .build();
 
 let request =
@@ -420,7 +443,7 @@ let client = GeminiClient::new(std::env::var("GEMINI_API_KEY")?);
 
 // 1. Create a cache (must meet the model's minimum token threshold, e.g. 2,048 tokens).
 let cache_request = CachedContent::builder()
-    .model("gemini-2.5-flash")
+    .model("gemini-3.8-flash")
     .display_name("Reference Doc")
     .system_instruction(Content::builder().add_text_part("You are a helpful analyst.").build())
     .contents(vec![
@@ -440,7 +463,7 @@ let request = GenerateContentRequest::builder()
     ])
     .build();
 
-let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 
 // 3. Delete the cache when done.
 client.delete_cached_content(&cache_name).await?;
@@ -517,7 +540,7 @@ let request = GenerateContentRequest::builder()
     ])
     .build();
 
-let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 
 // 4. Clean up when finished (files otherwise expire automatically after ~48 hours).
 client.delete_file(&file_name).await?;
@@ -575,7 +598,7 @@ let batch = BatchGenerateContentRequest::new(
 );
 
 // 2. Submit the batch via `POST models/{model}:batchGenerateContent`
-let initial_op = client.batch_generate_content(&batch, "gemini-2.5-flash").await?;
+let initial_op = client.batch_generate_content(&batch, "gemini-3.8-flash").await?;
 let mut op = initial_op;
 let batch_name = op
     .name
@@ -679,7 +702,7 @@ let request = GenerateContentRequest::builder()
     }])
     .build();
 
-let response = client.generate_content(&request, "gemini-2.5-flash").await?;
+let response = client.generate_content(&request, "gemini-3.8-flash").await?;
 println!("{}", response.candidates[0].get_text().unwrap());
 
 // Grounding metadata is accessible on the candidate
@@ -776,7 +799,7 @@ loop {
 }
 
 // Fetch a single model by ID or full `models/...` resource name
-let model = client.get_model("gemini-2.5-flash").await?;
+let model = client.get_model("gemini-3.8-flash").await?;
 println!(
     "Input limit: {:?}, Output limit: {:?}, Thinking: {:?}",
     model.input_token_limit, model.output_token_limit, model.thinking
@@ -823,5 +846,5 @@ errors (with status codes and messages from Google), and serialization failures.
 
 - `"gemini-3.1-pro-preview"` — most capable text model
 - `"gemini-3.8-flash"` — fast and cost-efficient
-- `"gemini-3.1-flash-lite"` — fastest and cheapest (used by the examples)
+- `"gemini-3.1-flash-lite"` — fastest and cheapest
 - `"gemini-embedding-001"` — text embeddings
