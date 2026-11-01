@@ -326,7 +326,7 @@ if let Some(candidate) = response.candidates.last()
 ## Image generation
 
 Generate images through `generate_content` using a Gemini image model (such as
-`"gemini-2.5-flash-image"` or `"gemini-3.1-flash-image-preview"`), requesting
+`"gemini-2.5-flash-image"`, `"gemini-3.1-flash-image"`, or `"gemini-3-pro-image"`), requesting
 `Modality::Image` in `response_modalities` and configuring output dimensions with `ImageConfig`:
 
 ```rust

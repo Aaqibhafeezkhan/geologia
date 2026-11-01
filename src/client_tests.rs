@@ -103,6 +103,10 @@ fn all_endpoint_urls_build_from_configured_base_url() {
         "https://custom.endpoint.example/v1/models/gemini-2.0-flash:countTokens"
     );
     assert_eq!(
+        client.endpoint_url("models/imagen-3.0-generate-002:predict"),
+        "https://custom.endpoint.example/v1/models/imagen-3.0-generate-002:predict"
+    );
+    assert_eq!(
         client.endpoint_url("cachedContents"),
         "https://custom.endpoint.example/v1/cachedContents"
     );

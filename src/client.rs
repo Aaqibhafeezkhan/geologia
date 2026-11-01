@@ -272,6 +272,46 @@ impl GeminiClient {
         }
     }
 
+    /// Generates images from a text prompt using an Imagen model via `models/{model}:predict`.
+    ///
+    /// # Availability
+    ///
+    /// Standard Gemini API keys do not list any `imagen-*` models or any model supporting
+    /// `:predict` in `GET /v1beta/models`. For Gemini image models (such as
+    /// `"gemini-2.5-flash-image"`), use [`generate_content`](Self::generate_content) with
+    /// [`Modality::Image`](crate::prelude::Modality::Image) and
+    /// [`ImageConfig`](crate::prelude::ImageConfig) instead.
+    #[deprecated(
+        note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+    )]
+    #[allow(deprecated)]
+    pub async fn predict_image(
+        &self,
+        request: &PredictImageRequest,
+        model: &str,
+    ) -> GeminiResult<PredictImageResponse> {
+        let endpoint_url = self.endpoint_url(&format!("models/{model}:predict"));
+
+        let resp = self
+            .client
+            .post(&endpoint_url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(&request)
+            .send()
+            .await?;
+        let resp = Self::error_for_status(resp).await?;
+
+        let txt_json = resp.text().await?;
+
+        match serde_json::from_str::<PredictImageResponse>(&txt_json) {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                error!(response = txt_json, error = ?e, "Failed to parse response");
+                Err(e.into())
+            }
+        }
+    }
+
     /// Creates a new explicit context cache resource.
     ///
     /// Context caching allows pre-computing and reusing large prefixes (e.g. documents, system

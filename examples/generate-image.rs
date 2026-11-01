@@ -37,18 +37,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .generate_content(&request, "gemini-2.5-flash-image")
         .await?;
 
-    let candidate = response
-        .candidates
-        .first()
-        .ok_or("No candidates returned in response")?;
-    let (mime_type, image_bytes) = candidate
-        .get_inline_data()
-        .ok_or("No inline image data returned in candidate")??;
+    let candidate = response.candidates.first().ok_or_else(|| {
+        format!(
+            "No candidates returned in response (prompt_feedback: {:?})",
+            response.prompt_feedback
+        )
+    })?;
+    let (mime_type, image_bytes) = candidate.get_inline_data().ok_or_else(|| {
+        format!(
+            "No inline image data returned in candidate (finish_reason: {:?}, finish_message: {:?}, prompt_feedback: {:?})",
+            candidate.finish_reason, candidate.finish_message, response.prompt_feedback
+        )
+    })??;
 
     let format = ImageFormat::from_mime_type(mime_type)
         .ok_or_else(|| format!("Unsupported image MIME type: {mime_type}"))?;
+    let ext = format.extensions_str().first().copied().unwrap_or("png");
+    let output_path = format!("output.{ext}");
     let img = ImageReader::with_format(Cursor::new(image_bytes), format).decode()?;
-    img.save("output.jpg")?;
-    println!("Saved generated image ({mime_type}) to output.jpg");
+    img.save(&output_path)?;
+    println!("Saved generated image ({mime_type}) to {output_path}");
     Ok(())
 }
