@@ -59,7 +59,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Call the API to generate content.
     let response = gemini_client
-        .generate_content(&request, "gemini-3-pro-preview")
+        .generate_content(&request, "gemini-3.1-flash-lite")
         .await?;
 
     // Print the response.
