@@ -25,4 +25,5 @@ pub use file_search_stores::*;
 pub use files::*;
 pub use generate_content::*;
 pub use models::*;
+#[allow(deprecated)]
 pub use predict_image::*;

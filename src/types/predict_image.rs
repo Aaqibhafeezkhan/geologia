@@ -1,18 +1,33 @@
 // Copyright 2026 Andre Cipriani Bandarra
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(deprecated)]
+
 use serde::{Deserialize, Serialize};
 use serde_with::base64::Base64;
 use serde_with::serde_as;
 
-/// Request body for the Imagen image generation `predict` endpoint.
+/// Request body for the Imagen image generation `predict` endpoint (`models/{model}:predict`).
+///
+/// # Availability
+///
+/// Standard Gemini API keys do not list any `imagen-*` models or any model supporting `:predict`
+/// in `GET /v1beta/models`. Use [`GeminiClient::generate_content`](crate::prelude::GeminiClient::generate_content)
+/// with [`Modality::Image`](crate::prelude::Modality::Image) and [`ImageConfig`](crate::prelude::ImageConfig)
+/// for Gemini image models (such as `"gemini-2.5-flash-image"`).
+#[deprecated(
+    note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PredictImageRequest {
     pub instances: Vec<PredictImageRequestPrompt>,
     pub parameters: PredictImageRequestParameters,
 }
 
-/// A text prompt instance for image generation.
+/// A text prompt instance for image generation via `:predict`.
+#[deprecated(
+    note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PredictImageRequestPrompt {
     /// The text prompt for the image.
@@ -25,7 +40,10 @@ pub struct PredictImageRequestPrompt {
     pub prompt: String,
 }
 
-/// Parameters controlling image generation behavior.
+/// Parameters controlling Imagen `:predict` image generation behavior.
+#[deprecated(
+    note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+)]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PredictImageRequestParameters {
@@ -69,7 +87,7 @@ pub struct PredictImageRequestParameters {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aspect_ratio: Option<String>,
 
-    /// Describes the output image format in an `PredictImageRequestParametersOutputOptions
+    /// Describes the output image format in a `PredictImageRequestParametersOutputOptions`
     /// object.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_options: Option<PredictImageRequestParametersOutputOptions>,
@@ -145,7 +163,10 @@ pub struct PredictImageRequestParameters {
     pub storage_uri: Option<String>,
 }
 
-/// Output format options for generated images.
+/// Output format options for generated images via `:predict`.
+#[deprecated(
+    note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PredictImageRequestParametersOutputOptions {
@@ -154,7 +175,7 @@ pub struct PredictImageRequestParametersOutputOptions {
     /// - "image/png": Save as a PNG image
     /// - "image/jpeg": Save as a JPEG image
     ///
-    /// The default value is "image/png".v
+    /// The default value is "image/png".
     pub mime_type: Option<String>,
 
     /// The level of compression if the output type is "image/jpeg".
@@ -163,12 +184,18 @@ pub struct PredictImageRequestParametersOutputOptions {
 }
 
 /// A successful response from the Imagen `predict` endpoint.
+#[deprecated(
+    note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PredictImageResponse {
     pub predictions: Vec<PredictImageResponsePrediction>,
 }
 
 /// A single generated image from the prediction response.
+#[deprecated(
+    note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+)]
 #[serde_as]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -179,6 +206,9 @@ pub struct PredictImageResponsePrediction {
 }
 
 /// Controls whether generated images may include people.
+#[deprecated(
+    note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PersonGeneration {
@@ -188,6 +218,9 @@ pub enum PersonGeneration {
 }
 
 /// Safety filter level for image generation.
+#[deprecated(
+    note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PredictImageSafetySetting {

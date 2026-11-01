@@ -17,7 +17,7 @@ description: >
 discovery (`models.list` and `models.get`), media file management (`files` / `media.upload`),
 asynchronous batch generation (`batches` / `batchGenerateContent`), File Search stores for semantic
 retrieval and grounding (`fileSearchStores`), text generation (including streaming), token counting,
-text embeddings, image generation (Imagen), context caching, and function calling.
+text embeddings, image generation, context caching, and function calling.
 
 ## Adding the dependency
 
@@ -323,44 +323,55 @@ if let Some(candidate) = response.candidates.last()
 
 ---
 
-## Image generation (Imagen)
+## Image generation
 
-> [!NOTE]
-> `client.predict_image` posts to `models/{model}:predict`. On standard Gemini API keys, no Imagen model currently appears in `GET /v1beta/models`, so this path is unverified and may return `404 NOT_FOUND` (see issue #44). This method is intended for environments with Imagen access enabled.
+Generate images through `generate_content` using a Gemini image model (such as
+`"gemini-2.5-flash-image"`, `"gemini-3.1-flash-image"`, or `"gemini-3-pro-image"`), requesting
+`Modality::Image` in `response_modalities` and configuring output dimensions with `ImageConfig`:
 
 ```rust
 use geologia::prelude::{
-    GeminiClient, PersonGeneration, PredictImageRequest, PredictImageRequestParameters,
-    PredictImageRequestParametersOutputOptions, PredictImageRequestPrompt,
-    PredictImageSafetySetting,
+    Content, GeminiClient, GenerateContentRequest, GenerationConfig, ImageConfig, Modality,
+    Role,
 };
 
-let request = PredictImageRequest {
-    instances: vec![PredictImageRequestPrompt {
-        prompt: "A tuxedo cat riding a rocket to the moon".to_string(),
-    }],
-    parameters: PredictImageRequestParameters {
-        sample_count: 1,
-        aspect_ratio: Some("16:9".to_string()),
-        output_options: Some(PredictImageRequestParametersOutputOptions {
-            mime_type: Some("image/jpeg".to_string()),
-            compression_quality: Some(85),
-        }),
-        person_generation: Some(PersonGeneration::AllowAdult),
-        safety_setting: Some(PredictImageSafetySetting::BlockLowAndAbove),
-        ..Default::default()
-    },
-};
+let request = GenerateContentRequest::builder()
+    .contents(vec![
+        Content::builder()
+            .role(Role::User)
+            .add_text_part("A tuxedo cat riding a rocket to the moon")
+            .build(),
+    ])
+    .generation_config(
+        GenerationConfig::builder()
+            .response_modalities([Modality::Image])
+            .image_config(
+                ImageConfig::builder()
+                    .aspect_ratio("16:9")
+                    .image_size("1K")
+                    .build(),
+            )
+            .build(),
+    )
+    .build();
 
-let mut result = client
-    .predict_image(&request, "your-imagen-model")
+let response = client
+    .generate_content(&request, "gemini-2.5-flash-image")
     .await?;
 
-let image = result.predictions.pop().unwrap();
-// image.bytes_base64_encoded: Vec<u8> — the raw image bytes
-// image.mime_type: String — e.g., "image/jpeg"
-std::fs::write("output.jpg", &image.bytes_base64_encoded)?;
+if let Some(candidate) = response.candidates.first()
+    && let Some(inline_data) = candidate.get_inline_data()
+{
+    let (mime_type, bytes) = inline_data?;
+    // mime_type: &str — e.g., "image/png" or "image/jpeg"
+    // bytes: Vec<u8> — the decoded raw image bytes
+    std::fs::write("output.png", &bytes)?;
+}
 ```
+
+To send an inline image or binary blob as part of a prompt, use
+`ContentBuilder::add_inline_data(mime_type, &bytes)` or `Part::from_inline_data(mime_type, &bytes)`.
+See `examples/generate-image.rs` for a runnable version.
 
 ---
 
@@ -847,4 +858,5 @@ errors (with status codes and messages from Google), and serialization failures.
 - `"gemini-3.1-pro-preview"` — most capable text model
 - `"gemini-3.8-flash"` — fast and cost-efficient
 - `"gemini-3.1-flash-lite"` — fastest and cheapest
+- `"gemini-2.5-flash-image"` — image generation
 - `"gemini-embedding-001"` — text embeddings

@@ -2718,3 +2718,73 @@ async fn get_document_against_mock_server() -> Result<()> {
     assert_eq!(doc.size_bytes, Some(512));
     Ok(())
 }
+
+#[tokio::test]
+async fn generate_content_image_generation_sends_modalities_and_decodes_inline_data() -> Result<()>
+{
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/models/gemini-2.5-flash-image:generateContent"))
+        .and(header("x-goog-api-key", "test-api-key"))
+        .and(body_json(serde_json::json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": "A tuxedo cat riding a rocket"}]
+            }],
+            "generationConfig": {
+                "responseModalities": ["IMAGE"],
+                "imageConfig": {
+                    "aspectRatio": "1:1"
+                }
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "candidates": [{
+                "index": 0,
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": "aGVsbG8="
+                        }
+                    }]
+                },
+                "finishReason": "STOP"
+            }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = GeminiClient::builder("test-api-key")
+        .base_url(mock_server.uri())
+        .build();
+
+    let request = GenerateContentRequest::builder()
+        .contents(vec![
+            Content::builder()
+                .role(Role::User)
+                .add_text_part("A tuxedo cat riding a rocket")
+                .build(),
+        ])
+        .generation_config(
+            GenerationConfig::builder()
+                .response_modalities([Modality::Image])
+                .image_config(ImageConfig::builder().aspect_ratio("1:1").build())
+                .build(),
+        )
+        .build();
+
+    let response = client
+        .generate_content(&request, "gemini-2.5-flash-image")
+        .await?;
+    let candidate = response.candidates.first().ok_or("expected candidate")?;
+    let (mime_type, bytes) = candidate
+        .get_inline_data()
+        .ok_or("expected inline image data")??;
+    assert_eq!(mime_type, "image/png");
+    assert_eq!(bytes, b"hello");
+    Ok(())
+}

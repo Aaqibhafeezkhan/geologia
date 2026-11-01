@@ -52,5 +52,6 @@ mod types;
 /// [`GeminiClientBuilder`](crate::prelude::GeminiClientBuilder), and all request/response types into scope.
 pub mod prelude {
     pub use crate::client::*;
+    #[allow(deprecated)]
     pub use crate::types::*;
 }

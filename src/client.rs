@@ -15,7 +15,7 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1
 /// Async client for the Google Gemini API.
 ///
 /// Provides methods for model discovery, content generation, streaming, token counting,
-/// text embeddings, image prediction, context caching, file management, batch generation
+/// text embeddings, image generation, context caching, file management, batch generation
 /// (Batch API), and File Search store management for semantic retrieval. All requests are authenticated with an API key passed at construction time.
 ///
 /// Use [`GeminiClient::builder`] for advanced configuration, such as pointing at a mock
@@ -272,7 +272,19 @@ impl GeminiClient {
         }
     }
 
-    /// Generates images from a text prompt using an Imagen model.
+    /// Generates images from a text prompt using an Imagen model via `models/{model}:predict`.
+    ///
+    /// # Availability
+    ///
+    /// Standard Gemini API keys do not list any `imagen-*` models or any model supporting
+    /// `:predict` in `GET /v1beta/models`. For Gemini image models (such as
+    /// `"gemini-2.5-flash-image"`), use [`generate_content`](Self::generate_content) with
+    /// [`Modality::Image`](crate::prelude::Modality::Image) and
+    /// [`ImageConfig`](crate::prelude::ImageConfig) instead.
+    #[deprecated(
+        note = "Standard Gemini API keys do not list Imagen `:predict` models; use `GeminiClient::generate_content` with `Modality::Image` and `ImageConfig` instead."
+    )]
+    #[allow(deprecated)]
     pub async fn predict_image(
         &self,
         request: &PredictImageRequest,
