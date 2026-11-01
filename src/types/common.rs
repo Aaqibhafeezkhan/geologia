@@ -5,6 +5,8 @@ use std::{fmt::Display, str::FromStr, vec};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::base64::Base64;
+use serde_with::serde_as;
 
 use crate::types::FunctionResponse;
 
@@ -37,6 +39,17 @@ impl Content {
         })
     }
 
+    /// Finds the first [`PartData::InlineData`] part and decodes its base64 payload into raw bytes,
+    /// returning `(mime_type, decoded_bytes)`.
+    ///
+    /// Returns `None` if there are no `InlineData` parts, or `Some(Err(...))` if base64 decoding fails.
+    pub fn get_inline_data(&self) -> Option<crate::error::Result<(&str, Vec<u8>)>> {
+        self.parts
+            .as_ref()?
+            .iter()
+            .find_map(Part::decode_inline_data)
+    }
+
     /// Creates a [`Content`] containing a single text part, suitable for use as a system instruction.
     pub fn system_prompt<S: Into<String>>(system_prompt: S) -> Self {
         Self::builder().add_text_part(system_prompt).build()
@@ -58,6 +71,11 @@ impl ContentBuilder {
     /// Appends a text part to this content.
     pub fn add_text_part<T: Into<String>>(self, text: T) -> Self {
         self.add_part(Part::from_text(text.into()))
+    }
+
+    /// Appends an inline binary [`Part`] (base64-encoded automatically) with the given MIME type.
+    pub fn add_inline_data<S: Into<String>>(self, mime_type: S, bytes: &[u8]) -> Self {
+        self.add_part(Part::from_inline_data(mime_type, bytes))
     }
 
     /// Appends an arbitrary [`Part`] to this content.
@@ -291,6 +309,24 @@ pub enum PartData {
     ToolResponse(ToolResponse),
 }
 
+#[serde_as]
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+struct Base64Bytes(#[serde_as(as = "Base64")] Vec<u8>);
+
+fn encode_base64(bytes: &[u8]) -> String {
+    let Ok(Value::String(s)) = serde_json::to_value(Base64Bytes(bytes.to_vec())) else {
+        unreachable!("Base64 serialization always produces a JSON string");
+    };
+    s
+}
+
+fn decode_base64(encoded: &str) -> crate::error::Result<Vec<u8>> {
+    let value = Value::String(encoded.to_owned());
+    let bytes: Base64Bytes = serde_json::from_value(value)?;
+    Ok(bytes.0)
+}
+
 impl Part {
     /// Creates a [`Part`] containing only text.
     pub fn from_text<S: Into<String>>(text: S) -> Self {
@@ -302,6 +338,36 @@ impl Part {
             video_metadata: None,
             speech_metadata: None,
             data: PartData::Text(text.into()),
+        }
+    }
+
+    /// Creates a [`Part`] containing inline binary data, base64-encoding `bytes`.
+    pub fn from_inline_data<S: Into<String>>(mime_type: S, bytes: &[u8]) -> Self {
+        Self {
+            thought: None,
+            thought_signature: None,
+            part_metadata: None,
+            media_resolution: None,
+            video_metadata: None,
+            speech_metadata: None,
+            data: PartData::InlineData {
+                display_name: None,
+                mime_type: mime_type.into(),
+                data: encode_base64(bytes),
+            },
+        }
+    }
+
+    /// If this part's data is [`PartData::InlineData`], decodes its base64 data into raw bytes
+    /// and returns `Some(Ok((mime_type, bytes)))` (or `Some(Err(...))` if base64 decoding fails).
+    ///
+    /// Returns `None` for any other [`PartData`] variant.
+    pub fn decode_inline_data(&self) -> Option<crate::error::Result<(&str, Vec<u8>)>> {
+        match &self.data {
+            PartData::InlineData {
+                mime_type, data, ..
+            } => Some(decode_base64(data).map(|bytes| (mime_type.as_str(), bytes))),
+            _ => None,
         }
     }
 }
@@ -970,5 +1036,91 @@ mod test {
 
         // Object
         assert!(serde_json::from_value::<DummyOptInt64>(json!({ "count": { "a": 1 } })).is_err());
+    }
+
+    #[test]
+    fn part_from_inline_data_serializes_and_decodes() -> crate::error::Result<()> {
+        let part = Part::from_inline_data("image/png", b"hello");
+
+        let serialized = serde_json::to_value(&part)?;
+        assert_eq!(
+            serialized,
+            json!({
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": "aGVsbG8="
+                }
+            })
+        );
+
+        let decoded = part.decode_inline_data();
+        assert!(matches!(decoded, Some(Ok(("image/png", ref bytes))) if bytes == b"hello"));
+        assert_eq!(decoded.transpose()?, Some(("image/png", b"hello".to_vec())));
+
+        Ok(())
+    }
+
+    #[test]
+    fn part_from_text_decode_inline_data_returns_none() {
+        let part = Part::from_text("hi");
+        assert!(part.decode_inline_data().is_none());
+    }
+
+    #[test]
+    fn content_builder_add_inline_data_and_get_inline_data() -> crate::error::Result<()> {
+        let content = Content::builder()
+            .add_text_part("caption")
+            .add_inline_data("image/jpeg", &[1, 2, 3, 4])
+            .build();
+
+        let inline_data = content.get_inline_data();
+        assert!(
+            matches!(inline_data, Some(Ok(("image/jpeg", ref bytes))) if bytes == &[1, 2, 3, 4])
+        );
+        assert_eq!(
+            inline_data.transpose()?,
+            Some(("image/jpeg", vec![1, 2, 3, 4]))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn content_get_inline_data_returns_none_when_empty_or_text_only() {
+        let empty = Content::default();
+        assert!(empty.get_inline_data().is_none());
+
+        let text_only = Content::system_prompt("hello");
+        assert!(text_only.get_inline_data().is_none());
+    }
+
+    #[test]
+    fn invalid_base64_in_inline_data_returns_serde_error() {
+        let part = Part {
+            thought: None,
+            thought_signature: None,
+            part_metadata: None,
+            media_resolution: None,
+            video_metadata: None,
+            speech_metadata: None,
+            data: PartData::InlineData {
+                display_name: None,
+                mime_type: "image/png".to_string(),
+                data: "not valid base64!@#$%".to_string(),
+            },
+        };
+
+        let decoded = part.decode_inline_data();
+        assert!(matches!(decoded, Some(Err(crate::error::Error::Serde(_)))));
+
+        let content = Content {
+            role: None,
+            parts: Some(vec![part]),
+        };
+        let content_decoded = content.get_inline_data();
+        assert!(matches!(
+            content_decoded,
+            Some(Err(crate::error::Error::Serde(_)))
+        ));
     }
 }

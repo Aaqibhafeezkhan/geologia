@@ -631,6 +631,8 @@ pub struct SpeechConfig {
 
 /// Configuration for image generation outputs.
 ///
+/// Use [`ImageConfig::builder`] for ergonomic construction.
+///
 /// See <https://ai.google.dev/api/generate-content#ImageConfig>.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -641,6 +643,38 @@ pub struct ImageConfig {
     /// Size of generated images (e.g. `"1K"`, `"2K"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_size: Option<String>,
+}
+
+impl ImageConfig {
+    /// Returns a new [`ImageConfigBuilder`].
+    pub fn builder() -> ImageConfigBuilder {
+        ImageConfigBuilder::default()
+    }
+}
+
+/// Builder for [`ImageConfig`].
+#[derive(Clone, Debug, Default)]
+pub struct ImageConfigBuilder {
+    image_config: ImageConfig,
+}
+
+impl ImageConfigBuilder {
+    /// Sets the aspect ratio of generated images (e.g. `"1:1"`, `"16:9"`).
+    pub fn aspect_ratio<T: Into<String>>(mut self, aspect_ratio: T) -> Self {
+        self.image_config.aspect_ratio = Some(aspect_ratio.into());
+        self
+    }
+
+    /// Sets the size of generated images (e.g. `"1K"`, `"2K"`).
+    pub fn image_size<T: Into<String>>(mut self, image_size: T) -> Self {
+        self.image_config.image_size = Some(image_size.into());
+        self
+    }
+
+    /// Consumes the builder and returns the constructed [`ImageConfig`].
+    pub fn build(self) -> ImageConfig {
+        self.image_config
+    }
 }
 
 /// Configuration for the model's "thinking" (chain-of-thought) behavior.
@@ -818,6 +852,15 @@ impl Candidate {
             Some(content) => content.get_text(),
             None => None,
         }
+    }
+
+    /// Finds the first [`PartData::InlineData`](super::PartData::InlineData) part in this
+    /// candidate's content and decodes its base64 payload into `(mime_type, decoded_bytes)`.
+    ///
+    /// Returns `None` if there is no content or no `InlineData` part, or `Some(Err(...))` if
+    /// base64 decoding fails.
+    pub fn get_inline_data(&self) -> Option<Result<(&str, Vec<u8>)>> {
+        self.content.as_ref()?.get_inline_data()
     }
 }
 
@@ -2238,5 +2281,53 @@ mod tests {
 }
 "#;
         let _ = serde_json::from_str::<GenerateContentResponseResult>(input).unwrap();
+    }
+
+    #[test]
+    fn image_config_builder_serializes_and_round_trips() -> serde_json::Result<()> {
+        let empty = ImageConfig::builder().build();
+        assert_eq!(serde_json::to_value(&empty)?, json!({}));
+
+        let config = ImageConfig::builder()
+            .aspect_ratio("16:9")
+            .image_size("2K")
+            .build();
+        let expected = json!({
+            "aspectRatio": "16:9",
+            "imageSize": "2K"
+        });
+        let serialized = serde_json::to_value(&config)?;
+        assert_eq!(serialized, expected);
+        assert_eq!(serde_json::from_value::<ImageConfig>(serialized)?, config);
+        Ok(())
+    }
+
+    #[test]
+    fn candidate_get_inline_data_decodes_payload() {
+        let input = r#"
+        {
+          "index": 0,
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "inlineData": {
+                  "mimeType": "image/png",
+                  "data": "aGVsbG8="
+                }
+              }
+            ]
+          }
+        }"#;
+        let candidate: Candidate = serde_json::from_str(input).unwrap();
+        let (mime_type, data) = candidate
+            .get_inline_data()
+            .expect("expected inline data part")
+            .expect("expected successful base64 decode");
+        assert_eq!(mime_type, "image/png");
+        assert_eq!(data, b"hello".to_vec());
+
+        let empty_candidate: Candidate = serde_json::from_value(json!({ "index": 0 })).unwrap();
+        assert!(empty_candidate.get_inline_data().is_none());
     }
 }

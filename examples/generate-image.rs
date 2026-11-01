@@ -4,9 +4,7 @@
 use std::{env, error::Error, io::Cursor};
 
 use geologia::prelude::{
-    GeminiClient, PersonGeneration, PredictImageRequest, PredictImageRequestParameters,
-    PredictImageRequestParametersOutputOptions, PredictImageRequestPrompt,
-    PredictImageSafetySetting,
+    Content, GeminiClient, GenerateContentRequest, GenerationConfig, ImageConfig, Modality, Role,
 };
 use image::{ImageFormat, ImageReader};
 
@@ -18,36 +16,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let api_key = env::var("GEMINI_API_KEY")?;
     let gemini_client = GeminiClient::new(api_key);
 
-    let prompt = "
-    Create an image of a tuxedo cat riding a rocket to the moon.";
-    let request = PredictImageRequest {
-        instances: vec![PredictImageRequestPrompt {
-            prompt: prompt.to_string(),
-        }],
-        parameters: PredictImageRequestParameters {
-            sample_count: 1,
-            aspect_ratio: Some("1:1".to_string()),
-            output_options: Some(PredictImageRequestParametersOutputOptions {
-                mime_type: Some("image/jpeg".to_string()),
-                compression_quality: Some(75),
-            }),
-            person_generation: Some(PersonGeneration::AllowAdult),
-            safety_setting: Some(PredictImageSafetySetting::BlockLowAndAbove),
-            ..Default::default()
-        },
-    };
+    let request = GenerateContentRequest::builder()
+        .contents(vec![
+            Content::builder()
+                .role(Role::User)
+                .add_text_part("Create an image of a tuxedo cat riding a rocket to the moon.")
+                .build(),
+        ])
+        .generation_config(
+            GenerationConfig::builder()
+                .response_modalities([Modality::Image])
+                .image_config(ImageConfig::builder().aspect_ratio("1:1").build())
+                .build(),
+        )
+        .build();
 
-    println!("Request: {:#?}", serde_json::to_string(&request).unwrap());
+    println!("Request: {}", serde_json::to_string(&request)?);
 
-    let mut result = gemini_client
-        .predict_image(&request, "imagen-4.0-generate-001")
+    let response = gemini_client
+        .generate_content(&request, "gemini-2.5-flash-image")
         .await?;
 
-    let result = result.predictions.pop().unwrap();
+    let candidate = response
+        .candidates
+        .first()
+        .ok_or("No candidates returned in response")?;
+    let (mime_type, image_bytes) = candidate
+        .get_inline_data()
+        .ok_or("No inline image data returned in candidate")??;
 
-    let format = ImageFormat::from_mime_type(result.mime_type).unwrap();
-    let img =
-        ImageReader::with_format(Cursor::new(result.bytes_base64_encoded), format).decode()?;
+    let format = ImageFormat::from_mime_type(mime_type)
+        .ok_or_else(|| format!("Unsupported image MIME type: {mime_type}"))?;
+    let img = ImageReader::with_format(Cursor::new(image_bytes), format).decode()?;
     img.save("output.jpg")?;
+    println!("Saved generated image ({mime_type}) to output.jpg");
     Ok(())
 }

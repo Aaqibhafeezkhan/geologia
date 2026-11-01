@@ -15,7 +15,7 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1
 /// Async client for the Google Gemini API.
 ///
 /// Provides methods for model discovery, content generation, streaming, token counting,
-/// text embeddings, image prediction, context caching, file management, batch generation
+/// text embeddings, image generation, context caching, file management, batch generation
 /// (Batch API), and File Search store management for semantic retrieval. All requests are authenticated with an API key passed at construction time.
 ///
 /// Use [`GeminiClient::builder`] for advanced configuration, such as pointing at a mock
@@ -265,34 +265,6 @@ impl GeminiClient {
 
         match serde_json::from_str::<CountTokensResponse>(&txt_json) {
             Ok(response) => Ok(response.into_result()?),
-            Err(e) => {
-                error!(response = txt_json, error = ?e, "Failed to parse response");
-                Err(e.into())
-            }
-        }
-    }
-
-    /// Generates images from a text prompt using an Imagen model.
-    pub async fn predict_image(
-        &self,
-        request: &PredictImageRequest,
-        model: &str,
-    ) -> GeminiResult<PredictImageResponse> {
-        let endpoint_url = self.endpoint_url(&format!("models/{model}:predict"));
-
-        let resp = self
-            .client
-            .post(&endpoint_url)
-            .header("x-goog-api-key", &self.api_key)
-            .json(&request)
-            .send()
-            .await?;
-        let resp = Self::error_for_status(resp).await?;
-
-        let txt_json = resp.text().await?;
-
-        match serde_json::from_str::<PredictImageResponse>(&txt_json) {
-            Ok(response) => Ok(response),
             Err(e) => {
                 error!(response = txt_json, error = ?e, "Failed to parse response");
                 Err(e.into())
